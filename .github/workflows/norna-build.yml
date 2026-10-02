@@ -1,0 +1,22 @@
+name: norna build
+
+# Builds the fork and attaches the tarball to a GitHub Release (see .github/norna_release.py).
+# Runs only on pushes to our own norna/** branches and by hand. NEVER add a pull_request trigger:
+# this job runs on a self-hosted runner and must not execute code from other people's PRs.
+on:
+  push:
+    branches: ['norna/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: [self-hosted, orca]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/norna_release.py
+        env:
+          GH_TOKEN: ${{ github.token }}
