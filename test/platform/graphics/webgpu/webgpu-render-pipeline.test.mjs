@@ -3,7 +3,7 @@ import sinon from 'sinon';
 
 import { BlendState } from '../../../../src/platform/graphics/blend-state.js';
 import {
-    CULLFACE_BACK, FRONTFACE_CCW, FUNC_GREATER, FUNC_LESSEQUAL, PRIMITIVE_LINES, PRIMITIVE_POINTS,
+    CULLFACE_BACK, CULLFACE_NONE, FRONTFACE_CCW, FUNC_GREATER, FUNC_LESSEQUAL, PRIMITIVE_LINES, PRIMITIVE_POINTS,
     PRIMITIVE_TRIANGLES
 } from '../../../../src/platform/graphics/constants.js';
 import { DepthState } from '../../../../src/platform/graphics/depth-state.js';
@@ -77,6 +77,151 @@ describe('WebgpuRenderPipeline', function () {
             ];
             const pipelines = new Set(depthStates.map(depthState => get(depthState)));
             expect(pipelines.size).to.equal(depthStates.length);
+        });
+
+    });
+
+    describe('#get with asyncPipelines', function () {
+
+        let device;
+        let renderPipeline;
+        let compiles;
+
+        const get = (cullMode = CULLFACE_BACK) => renderPipeline.get({ type: PRIMITIVE_TRIANGLES }, undefined, undefined,
+            undefined, shader, renderTarget, bindGroupFormats, BlendState.NOBLEND, DepthState.DEFAULT, cullMode,
+            false, stencil, stencil, FRONTFACE_CCW, false);
+
+        // a createRenderPipelineAsync whose promises the test settles by hand
+        const deferred = () => {
+            const d = {};
+            d.promise = new Promise((resolve, reject) => {
+                d.resolve = resolve;
+                d.reject = reject;
+            });
+            return d;
+        };
+
+        beforeEach(function () {
+            compiles = [];
+            device = {
+                asyncPipelines: true,
+                wgpu: {
+                    createRenderPipelineAsync: sinon.stub().callsFake(() => {
+                        const d = deferred();
+                        compiles.push(d);
+                        return d.promise;
+                    })
+                }
+            };
+            renderPipeline = new WebgpuRenderPipeline(device);
+            sinon.stub(renderPipeline, 'getPipelineLayout');
+            sinon.stub(renderPipeline.vertexBufferLayout, 'get');
+            sinon.stub(renderPipeline, 'buildDescriptor').returns({});
+            sinon.stub(renderPipeline, 'create').callsFake(() => ({ sync: true }));
+        });
+
+        afterEach(function () {
+            sinon.restore();
+        });
+
+        it('returns null while the pipeline compiles, and compiles each key once', function () {
+            expect(get()).to.equal(null);
+            expect(get()).to.equal(null);
+            expect(renderPipeline.pending).to.equal(1);
+            expect(device.wgpu.createRenderPipelineAsync.callCount).to.equal(1);
+            expect(renderPipeline.create.called).to.be.false;
+
+            // another key is another compile
+            expect(get(CULLFACE_NONE)).to.equal(null);
+            expect(renderPipeline.pending).to.equal(2);
+        });
+
+        it('returns the pipeline once the compile resolves', async function () {
+            expect(get()).to.equal(null);
+
+            const pipeline = {};
+            compiles[0].resolve(pipeline);
+            await renderPipeline.whenIdle();
+
+            expect(get()).to.equal(pipeline);
+            expect(renderPipeline.pending).to.equal(0);
+            expect(renderPipeline.created).to.deep.equal({ sync: 0, async: 1 });
+        });
+
+        it('settles whenIdle only when every compile has', async function () {
+            get();
+            get(CULLFACE_NONE);
+            let idle = false;
+            renderPipeline.whenIdle().then(() => (idle = true));
+
+            compiles[0].resolve({});
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(idle).to.be.false;
+
+            compiles[1].resolve({});
+            await renderPipeline.whenIdle();
+            expect(idle).to.be.true;
+            await renderPipeline.whenIdle();
+        });
+
+        it('creates a pipeline synchronously once asyncPipelines is off, and keeps it over the late compile', async function () {
+            expect(get()).to.equal(null);
+
+            device.asyncPipelines = false;
+            const pipeline = get();
+            expect(pipeline).to.deep.equal({ sync: true });
+
+            compiles[0].resolve({ late: true });
+            await renderPipeline.whenIdle();
+            expect(get()).to.equal(pipeline);
+            expect(renderPipeline.pending).to.equal(0);
+        });
+
+        it('creates a pipeline synchronously after its compile failed', async function () {
+            const warn = sinon.stub(console, 'warn');
+            expect(get()).to.equal(null);
+
+            compiles[0].reject(new Error('compile failed'));
+            await renderPipeline.whenIdle();
+            expect(renderPipeline.pending).to.equal(0);
+
+            expect(get()).to.deep.equal({ sync: true });
+            expect(device.wgpu.createRenderPipelineAsync.callCount).to.equal(1);
+            warn.restore();
+        });
+
+        it('stops counting the compiles of a lost device', async function () {
+            sinon.stub(console, 'warn');
+            get();
+            get(CULLFACE_NONE);
+            renderPipeline.clearCache();
+            expect(renderPipeline.pending).to.equal(0);
+            expect(renderPipeline.cache.size).to.equal(0);
+
+            // one pending compile of the new device
+            expect(get()).to.equal(null);
+            expect(renderPipeline.pending).to.equal(1);
+
+            compiles[0].resolve({});
+            compiles[1].reject(new Error('device lost'));
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(renderPipeline.pending).to.equal(1);
+
+            compiles[2].resolve({});
+            await renderPipeline.whenIdle();
+            expect(renderPipeline.pending).to.equal(0);
+        });
+
+        it('creates synchronously without the flag, or without createRenderPipelineAsync', function () {
+            device.asyncPipelines = false;
+            expect(get()).to.deep.equal({ sync: true });
+
+            device.asyncPipelines = true;
+            delete device.wgpu.createRenderPipelineAsync;
+            expect(get(CULLFACE_NONE)).to.deep.equal({ sync: true });
+            expect(renderPipeline.pending).to.equal(0);
         });
 
     });

@@ -69,6 +69,7 @@ describe('WebGPU render pipeline binding', function () {
             _boundVertexBuffers: [],
             _boundVertexOffsets: [],
             _pipelineDirty: true,
+            _skipDraw: false,
             _drawCallsPerFrame: 0,
             _primitiveCount: 0
         });
@@ -234,6 +235,102 @@ describe('WebGPU render pipeline binding', function () {
         expect(lookups()).to.equal(1);
         expect(encoder.setPipeline.calledOnceWithExactly(pipeline)).to.be.true;
         expect(encoder.draw.callCount).to.equal(3);
+    });
+
+    // with asyncPipelines on, a lookup returns null while the pipeline compiles and the draw is skipped
+    describe('while a pipeline compiles', function () {
+        const vertexBuffer = { format: { renderingHash: 1 } };
+
+        it('skips the draw, binds nothing and clears the pending vertex buffers', function () {
+            device.renderPipeline.get.returns(null);
+            device.asyncPipelines = true;
+            device.setVertexBuffer(vertexBuffer);
+
+            device.draw(primitive);
+
+            expect(encoder.draw.called).to.be.false;
+            expect(encoder.setPipeline.called).to.be.false;
+            expect(device.pipeline).to.equal(null);
+            expect(device.vertexBuffers).to.have.lengthOf(0);
+            expect(device._drawCallsPerFrame).to.equal(0);
+        });
+
+        it('looks the pipeline up again on the next draw of the same state, and binds it', function () {
+            device.asyncPipelines = true;
+            device.renderPipeline.get.onFirstCall().returns(null);
+
+            device.draw(primitive);
+            expect(encoder.draw.called).to.be.false;
+
+            // no state changed, yet the skipped draw must not leave the device believing it holds
+            // the pipeline of its state
+            device.draw(primitive);
+            expect(lookups()).to.equal(2);
+            expect(encoder.setPipeline.calledOnceWithExactly(pipeline)).to.be.true;
+            expect(encoder.draw.calledOnce).to.be.true;
+        });
+
+        it('does not reuse the pipeline of the previous state for a skipped state', function () {
+            device.asyncPipelines = true;
+            const compiling = {};
+            device.renderPipeline.get.callsFake(() => (device.cullMode === CULLFACE_NONE ? compiling.pipeline ?? null : pipeline));
+
+            device.draw(primitive);
+            expect(encoder.draw.callCount).to.equal(1);
+
+            // the state with the compiling pipeline: skipped, the first pipeline stays bound
+            device.setCullMode(CULLFACE_NONE);
+            device.draw(primitive);
+            expect(encoder.draw.callCount).to.equal(1);
+            expect(device.pipeline).to.equal(pipeline);
+
+            // still compiling: skipped again, instead of drawing with the first pipeline
+            device.draw(primitive);
+            expect(encoder.draw.callCount).to.equal(1);
+
+            // resolved: bound and drawn
+            compiling.pipeline = {};
+            device.draw(primitive);
+            expect(encoder.draw.callCount).to.equal(2);
+            expect(encoder.setPipeline.lastCall.args[0]).to.equal(compiling.pipeline);
+
+            // back to the first state
+            device.setCullMode(CULLFACE_BACK);
+            device.draw(primitive);
+            expect(encoder.setPipeline.lastCall.args[0]).to.equal(pipeline);
+            expect(encoder.draw.callCount).to.equal(3);
+        });
+
+        it('skips a multi-draw run as a unit, and draws the next run', function () {
+            device.asyncPipelines = true;
+            device.renderPipeline.get.onFirstCall().returns(null);
+            device.setVertexBuffer(vertexBuffer);
+
+            device.draw(primitive, undefined, 1, undefined, true, false);
+            expect(device.vertexBuffers).to.have.lengthOf(1);
+            device.draw(primitive, undefined, 1, undefined, false, false);
+            device.draw(primitive, undefined, 1, undefined, false, true);
+            expect(encoder.draw.called).to.be.false;
+            expect(device.vertexBuffers).to.have.lengthOf(0);
+            expect(lookups()).to.equal(1);
+            expect(device.submitVertexBuffer.calledOnce).to.be.true;
+
+            device.setVertexBuffer(vertexBuffer);
+            device.draw(primitive, undefined, 1, undefined, true, false);
+            device.draw(primitive, undefined, 1, undefined, false, true);
+            expect(encoder.draw.callCount).to.equal(2);
+            expect(encoder.setPipeline.calledOnceWithExactly(pipeline)).to.be.true;
+        });
+
+        it('starts a new run unskipped even when the skipped one never reached its last draw', function () {
+            device.asyncPipelines = true;
+            device.renderPipeline.get.onFirstCall().returns(null);
+
+            device.draw(primitive, undefined, 1, undefined, true, false);
+            device.draw(primitive);
+
+            expect(encoder.draw.calledOnce).to.be.true;
+        });
     });
 
     it('reports a state change which bypassed the setters, in the debug build', function () {

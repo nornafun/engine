@@ -227,6 +227,35 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
     pipeline = null;
 
     /**
+     * When true, a render pipeline missing from the cache is compiled with
+     * createRenderPipelineAsync instead of createRenderPipeline, which can stall the frame for
+     * seconds inside one call while the driver compiles the native shader. A draw whose pipeline
+     * is still compiling is skipped - nothing is drawn for it - and the next draw of that state
+     * looks the pipeline up again, so it appears once the compile is done. Draws of the pipelines
+     * that are ready are unaffected. The flag applies to every draw made through the device, so
+     * turn it off around passes that must never skip a draw (post effects, UI), or warm them first.
+     * Turning it off makes a lookup of a pipeline still compiling create it synchronously.
+     *
+     * Not covered, and always synchronous: the mipmap generation and the depth resolve pipelines
+     * (used the moment they are created, and their formats are few - see
+     * {@link WebgpuMipmapRenderer#precompile}), and compute pipelines (a dispatch cannot be
+     * skipped without breaking its consumers). Ignored on a browser without
+     * createRenderPipelineAsync.
+     *
+     * @type {boolean}
+     */
+    asyncPipelines = false;
+
+    /**
+     * True while the draw calls of the current multi-draw run (first to last) are being skipped,
+     * because the pipeline of its first call is still compiling.
+     *
+     * @type {boolean}
+     * @private
+     */
+    _skipDraw = false;
+
+    /**
      * True when a render state the render pipeline depends on has changed since the pipeline was
      * last looked up, see {@link WebgpuGraphicsDevice#draw}. The setters raise it only when a
      * value actually changes, so a run of draws with the same state reuses the pipeline without
@@ -433,7 +462,43 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
         for (const bucket of this.renderPipeline.cache.values()) renderPipelines += bucket.length;
         for (const bucket of this.computePipeline.cache.values()) computePipelines += bucket.length;
         counts.set('renderPipelines', renderPipelines);
+        counts.set('pendingRenderPipelines', this.renderPipeline.pending);
         counts.set('computePipelines', computePipelines);
+    }
+
+    /**
+     * The number of render pipelines compiling asynchronously (see
+     * {@link WebgpuGraphicsDevice#asyncPipelines}), including the mipmap pipelines of
+     * {@link WebgpuMipmapRenderer#precompile}. Draws of the ones pending are skipped.
+     *
+     * @type {number}
+     */
+    get pendingPipelines() {
+        return this.renderPipeline.pending + (this.mipmapRenderer?.pending ?? 0);
+    }
+
+    /**
+     * Pipelines created so far, by who created them and how. `renderSync` and `mipmapSync` are the
+     * ones that can stall a frame inside the call that needs them.
+     *
+     * @type {{ renderSync: number, renderAsync: number, mipmapSync: number }}
+     */
+    get pipelineCreates() {
+        return {
+            renderSync: this.renderPipeline.created.sync,
+            renderAsync: this.renderPipeline.created.async,
+            mipmapSync: this.mipmapRenderer?.syncCreated ?? 0
+        };
+    }
+
+    /**
+     * Resolves once no render pipeline is compiling asynchronously - immediately when none is.
+     * Mipmap pipelines are awaited through the promise of {@link WebgpuMipmapRenderer#precompile}.
+     *
+     * @returns {Promise<void>} The promise.
+     */
+    whenPipelinesIdle() {
+        return this.renderPipeline.whenIdle();
     }
 
     /**
@@ -948,7 +1013,7 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
         this.pipeline = null;
         this.insideRenderPass = false;
         this.bindGroupFormats.length = 0;
-        this.renderPipeline.cache.clear();
+        this.renderPipeline.clearCache();
         this.computePipeline.cache.clear();
     }
 
@@ -1338,6 +1403,15 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
 
     draw(primitive, indexBuffer, numInstances = 1, drawCommands, first = true, last = true, firstInstance = 0) {
 
+        // the rest of a multi-draw run whose first call was skipped, see below
+        if (this._skipDraw && !first) {
+            if (last) {
+                this._skipDraw = false;
+                this.clearVertexBuffer();
+            }
+            return;
+        }
+
         if (this.shader.ready && !this.shader.failed) {
 
             WebgpuDebug.validate(this);
@@ -1352,6 +1426,8 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
             const vb1 = this.vertexBuffers[1];
 
             if (first) {
+
+                this._skipDraw = false;
 
                 if (vb0) {
                     const vbSlot = this.submitVertexBuffer(vb0, 0);
@@ -1386,7 +1462,22 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
                     pipeline = this.renderPipeline.get(primitive, vb0?.format, vb1?.format, indexBuffer?.format, this.shader, this.renderTarget,
                         this.bindGroupFormats, this.blendState, this.depthState, this.cullMode,
                         this.stencilEnabled, this.stencilFront, this.stencilBack, this.frontFace, this.alphaToCoverage);
-                    Debug.assert(pipeline);
+
+                    // null only with asyncPipelines on: the pipeline is still compiling, so skip this
+                    // draw, and the rest of its multi-draw run. Nothing was bound for it: the
+                    // pipeline set on the encoder is still this.pipeline, and the dirty flag cleared
+                    // above is raised again so the next draw looks the pipeline up instead of
+                    // reusing the previous one.
+                    if (!pipeline) {
+                        Debug.assert(this.asyncPipelines, 'A render pipeline lookup returned nothing.');
+                        this._pipelineDirty = true;
+                        this._skipDraw = !last;
+                        WebgpuDebug.end(this, 'Drawing (skipped, pipeline compiling)', { vb0, vb1, indexBuffer, primitive });
+                        if (last) {
+                            this.clearVertexBuffer();
+                        }
+                        return;
+                    }
 
                     if (this.pipeline !== pipeline) {
                         this.pipeline = pipeline;

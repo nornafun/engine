@@ -128,12 +128,28 @@ const _indexFormat = [
 
 class CacheEntry {
     /**
-     * Render pipeline
+     * Render pipeline. Null while an asynchronous compile of it is pending (see
+     * {@link WebgpuRenderPipeline#pending}), or after that compile failed.
      *
-     * @type {GPURenderPipeline}
+     * @type {GPURenderPipeline|null}
      * @private
      */
     pipeline;
+
+    /**
+     * True while createRenderPipelineAsync of this entry has not settled.
+     *
+     * @type {boolean}
+     */
+    compiling = false;
+
+    /**
+     * True when the asynchronous compile of this entry failed, so it is created synchronously by
+     * the next lookup, where the usual validation reports the error.
+     *
+     * @type {boolean}
+     */
+    failed = false;
 
     /**
      * The full array of hashes used to lookup the pipeline, used in case of hash collision.
@@ -165,6 +181,80 @@ class WebgpuRenderPipeline extends WebgpuPipeline {
          * @type {Map<number, CacheEntry[]>}
          */
         this.cache = new Map();
+
+        /**
+         * The number of asynchronous compiles in flight, see {@link WebgpuGraphicsDevice#pendingPipelines}.
+         *
+         * @type {number}
+         */
+        this.pending = 0;
+
+        /**
+         * Pipelines created by this class, by how: `sync` inside a lookup (can stall the frame),
+         * `async` through createRenderPipelineAsync.
+         */
+        this.created = { sync: 0, async: 0 };
+
+        /**
+         * Resolvers of the promises handed out by {@link WebgpuRenderPipeline#whenIdle}.
+         *
+         * @type {Function[]}
+         * @private
+         */
+        this._idleWaiters = [];
+
+        /**
+         * Bumped by clearCache, so that a compile started before it can tell it is stale.
+         *
+         * @type {number}
+         * @private
+         */
+        this._generation = 0;
+    }
+
+    /**
+     * Drops every cached pipeline, on a device loss: the pipelines belong to the lost native
+     * device, and its compiles in flight never count again.
+     */
+    clearCache() {
+        this.cache.clear();
+        this._generation++;
+        this.pending = 0;
+        this._flushIdleWaiters();
+    }
+
+    /** @private */
+    _flushIdleWaiters() {
+        const waiters = this._idleWaiters;
+        this._idleWaiters = [];
+        waiters.forEach(resolve => resolve());
+    }
+
+    /**
+     * Returns a promise that resolves once no asynchronous compile is in flight - immediately
+     * when there is none.
+     *
+     * @returns {Promise<void>} The promise.
+     */
+    whenIdle() {
+        if (this.pending === 0) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            this._idleWaiters.push(resolve);
+        });
+    }
+
+    /**
+     * @param {CacheEntry} entry - The entry whose asynchronous compile settled.
+     * @param {number} generation - The generation the compile started in.
+     * @private
+     */
+    _settled(entry, generation) {
+        entry.compiling = false;
+        if (generation === this._generation && --this.pending === 0) {
+            this._flushIdleWaiters();
+        }
     }
 
     /**
@@ -196,7 +286,10 @@ class WebgpuRenderPipeline extends WebgpuPipeline {
      * @param {StencilParameters} stencilBack - The stencil state for back faces.
      * @param {number} frontFace - The front face.
      * @param {boolean} alphaToCoverage - Whether alpha to coverage is requested.
-     * @returns {GPURenderPipeline} Returns the render pipeline.
+     * @returns {GPURenderPipeline|null} Returns the render pipeline. Null only when
+     * {@link WebgpuGraphicsDevice#asyncPipelines} is on and the pipeline is still compiling: the
+     * lookup has started or is awaiting the compile, and the caller must skip its draw and look
+     * the pipeline up again later. With the flag off it is never null.
      * @private
      */
     get(primitive, vertexFormat0, vertexFormat1, ibFormat, shader, renderTarget, bindGroupFormats, blendState,
@@ -253,12 +346,27 @@ class WebgpuRenderPipeline extends WebgpuPipeline {
         // cached pipeline
         let cacheEntries = this.cache.get(hash);
 
+        // an entry of this key without a pipeline, to be created now (see below)
+        let cacheEntry = null;
+        const useAsync = this.device.asyncPipelines && typeof this.device.wgpu?.createRenderPipelineAsync === 'function';
+
         // if we have cache entries, find the exact match, as hash collision can occur
         if (cacheEntries) {
             for (let i = 0; i < cacheEntries.length; i++) {
                 const entry = cacheEntries[i];
                 if (WebgpuPipeline.keysEqual(entry.hashes, lookupHashes)) {
-                    return entry.pipeline;
+                    if (entry.pipeline) {
+                        return entry.pipeline;
+                    }
+
+                    // compiling: still pending while asynchronous pipelines stay on, otherwise the
+                    // caller needs the pipeline now - create it synchronously, and the late result
+                    // of the compile is dropped. A failed compile is created synchronously too.
+                    if (entry.compiling && useAsync) {
+                        return null;
+                    }
+                    cacheEntry = entry;
+                    break;
                 }
             }
         }
@@ -273,19 +381,35 @@ class WebgpuRenderPipeline extends WebgpuPipeline {
         const vertexBufferLayout = this.vertexBufferLayout.get(vertexFormat0, vertexFormat1);
 
         // pipeline
-        const cacheEntry = new CacheEntry();
-        cacheEntry.hashes = new Uint32Array(lookupHashes);
-        cacheEntry.pipeline = this.create(primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState,
-            depthState, vertexBufferLayout, cullMode, stencilEnabled, stencilFront, stencilBack, frontFace,
-            alphaToCoverageEnabled);
+        const isNew = !cacheEntry;
+        if (isNew) {
+            cacheEntry = new CacheEntry();
+            cacheEntry.hashes = new Uint32Array(lookupHashes);
+            cacheEntry.pipeline = null;
+        }
+
+        if (useAsync && !cacheEntry.failed) {
+
+            // the entry takes its place in the cache now, with no pipeline until the compile
+            // settles, so the same key is never compiled twice
+            this.createAsync(cacheEntry, primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState,
+                depthState, vertexBufferLayout, cullMode, stencilEnabled, stencilFront, stencilBack, frontFace,
+                alphaToCoverageEnabled);
+        } else {
+            cacheEntry.pipeline = this.create(primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState,
+                depthState, vertexBufferLayout, cullMode, stencilEnabled, stencilFront, stencilBack, frontFace,
+                alphaToCoverageEnabled);
+        }
 
         // add to cache
-        if (cacheEntries) {
-            cacheEntries.push(cacheEntry);
-        } else {
-            cacheEntries = [cacheEntry];
+        if (isNew) {
+            if (cacheEntries) {
+                cacheEntries.push(cacheEntry);
+            } else {
+                cacheEntries = [cacheEntry];
+            }
+            this.cache.set(hash, cacheEntries);
         }
-        this.cache.set(hash, cacheEntries);
 
         return cacheEntry.pipeline;
     }
@@ -419,10 +543,29 @@ class WebgpuRenderPipeline extends WebgpuPipeline {
         return depthStencil;
     }
 
-    create(primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState, depthState, vertexBufferLayout,
-        cullMode, stencilEnabled, stencilFront, stencilBack, frontFace, alphaToCoverageEnabled) {
-
-        const wgpu = this.device.wgpu;
+    /**
+     * Builds the descriptor of a render pipeline, shared by the synchronous and the asynchronous
+     * creation.
+     *
+     * @param {string} primitiveTopology - The primitive topology.
+     * @param {number|undefined} ibFormat - The strip index buffer format.
+     * @param {Shader} shader - The shader.
+     * @param {RenderTarget} renderTarget - The render target.
+     * @param {GPUPipelineLayout|string} pipelineLayout - The pipeline layout.
+     * @param {BlendState} blendState - The blend state.
+     * @param {DepthState} depthState - The depth state.
+     * @param {GPUVertexBufferLayout[]} vertexBufferLayout - The vertex buffer layouts.
+     * @param {number} cullMode - The cull mode.
+     * @param {boolean} stencilEnabled - Whether stencil is enabled.
+     * @param {StencilParameters} stencilFront - The stencil state for front faces.
+     * @param {StencilParameters} stencilBack - The stencil state for back faces.
+     * @param {number} frontFace - The front face.
+     * @param {boolean} alphaToCoverageEnabled - Whether alpha to coverage is enabled.
+     * @returns {GPURenderPipelineDescriptor} The descriptor.
+     * @private
+     */
+    buildDescriptor(primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState, depthState,
+        vertexBufferLayout, cullMode, stencilEnabled, stencilFront, stencilBack, frontFace, alphaToCoverageEnabled) {
 
         /** @type {WebgpuShader} */
         const webgpuShader = shader.impl;
@@ -480,11 +623,45 @@ class WebgpuRenderPipeline extends WebgpuPipeline {
             });
         }
 
-        WebgpuDebug.validate(this.device);
-
         _pipelineId++;
         DebugHelper.setLabel(desc, `RenderPipelineDescr-${_pipelineId}`);
 
+        return desc;
+    }
+
+    /**
+     * Creates a render pipeline synchronously. On a cold shader cache this is where the driver
+     * compiles the native shader, which can take seconds inside one call.
+     *
+     * @param {string} primitiveTopology - The primitive topology.
+     * @param {number|undefined} ibFormat - The strip index buffer format.
+     * @param {Shader} shader - The shader.
+     * @param {RenderTarget} renderTarget - The render target.
+     * @param {GPUPipelineLayout|string} pipelineLayout - The pipeline layout.
+     * @param {BlendState} blendState - The blend state.
+     * @param {DepthState} depthState - The depth state.
+     * @param {GPUVertexBufferLayout[]} vertexBufferLayout - The vertex buffer layouts.
+     * @param {number} cullMode - The cull mode.
+     * @param {boolean} stencilEnabled - Whether stencil is enabled.
+     * @param {StencilParameters} stencilFront - The stencil state for front faces.
+     * @param {StencilParameters} stencilBack - The stencil state for back faces.
+     * @param {number} frontFace - The front face.
+     * @param {boolean} alphaToCoverageEnabled - Whether alpha to coverage is enabled.
+     * @returns {GPURenderPipeline} The pipeline.
+     * @private
+     */
+    create(primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState, depthState, vertexBufferLayout,
+        cullMode, stencilEnabled, stencilFront, stencilBack, frontFace, alphaToCoverageEnabled) {
+
+        const wgpu = this.device.wgpu;
+
+        WebgpuDebug.validate(this.device);
+
+        const desc = this.buildDescriptor(primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState,
+            depthState, vertexBufferLayout, cullMode, stencilEnabled, stencilFront, stencilBack, frontFace,
+            alphaToCoverageEnabled);
+
+        this.created.sync++;
         const pipeline = wgpu.createRenderPipeline(desc);
 
         DebugHelper.setLabel(pipeline, `RenderPipeline-${_pipelineId}`);
@@ -497,6 +674,57 @@ class WebgpuRenderPipeline extends WebgpuPipeline {
         });
 
         return pipeline;
+    }
+
+    /**
+     * Starts the creation of a render pipeline with createRenderPipelineAsync, which compiles off
+     * the calling thread, and stores it in the entry when it resolves.
+     *
+     * @param {CacheEntry} entry - The cache entry to receive the pipeline.
+     * @param {string} primitiveTopology - The primitive topology.
+     * @param {number|undefined} ibFormat - The strip index buffer format.
+     * @param {Shader} shader - The shader.
+     * @param {RenderTarget} renderTarget - The render target.
+     * @param {GPUPipelineLayout|string} pipelineLayout - The pipeline layout.
+     * @param {BlendState} blendState - The blend state.
+     * @param {DepthState} depthState - The depth state.
+     * @param {GPUVertexBufferLayout[]} vertexBufferLayout - The vertex buffer layouts.
+     * @param {number} cullMode - The cull mode.
+     * @param {boolean} stencilEnabled - Whether stencil is enabled.
+     * @param {StencilParameters} stencilFront - The stencil state for front faces.
+     * @param {StencilParameters} stencilBack - The stencil state for back faces.
+     * @param {number} frontFace - The front face.
+     * @param {boolean} alphaToCoverageEnabled - Whether alpha to coverage is enabled.
+     * @private
+     */
+    createAsync(entry, primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState, depthState,
+        vertexBufferLayout, cullMode, stencilEnabled, stencilFront, stencilBack, frontFace, alphaToCoverageEnabled) {
+
+        const desc = this.buildDescriptor(primitiveTopology, ibFormat, shader, renderTarget, pipelineLayout, blendState,
+            depthState, vertexBufferLayout, cullMode, stencilEnabled, stencilFront, stencilBack, frontFace,
+            alphaToCoverageEnabled);
+
+        const id = _pipelineId;
+        const generation = this._generation;
+        entry.compiling = true;
+        this.pending++;
+        this.created.async++;
+
+        // After a device loss (clearCache) the entry is unreachable and the compile no longer counts.
+        this.device.wgpu.createRenderPipelineAsync(desc).then((pipeline) => {
+
+            // the entry was created synchronously in the meantime, that one wins
+            if (!entry.pipeline) {
+                DebugHelper.setLabel(pipeline, `RenderPipeline-${id}`);
+                Debug.trace(TRACEID_RENDERPIPELINE_ALLOC, `Alloc (async): Id ${id}`, desc);
+                entry.pipeline = pipeline;
+            }
+            this._settled(entry, generation);
+        }, (error) => {
+            entry.failed = true;
+            Debug.warn('Asynchronous render pipeline creation failed, it is created synchronously instead.', error, desc);
+            this._settled(entry, generation);
+        });
     }
 }
 

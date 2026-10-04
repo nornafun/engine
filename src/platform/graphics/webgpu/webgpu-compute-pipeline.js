@@ -27,6 +27,13 @@ class CacheEntry {
     hashes = null;
 }
 
+/**
+ * Compute pipelines are always created synchronously, regardless of
+ * {@link WebgpuGraphicsDevice#asyncPipelines}: a dispatch produces data its consumers read in the
+ * same frame, so it cannot be skipped the way a draw can.
+ *
+ * @ignore
+ */
 class WebgpuComputePipeline extends WebgpuPipeline {
     // shader compute key + up to 2 bind group format keys (caller group 0 + reflected group)
     lookupHashes = new Uint32Array(3);

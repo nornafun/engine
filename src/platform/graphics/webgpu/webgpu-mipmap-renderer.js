@@ -13,6 +13,11 @@ import webgpuMipmap from '../shader-chunks/frag/webgpu-mipmap.js';
 /**
  * A WebGPU helper class implementing texture mipmap generation.
  *
+ * Its render pipelines (one per texture format) are created synchronously on first use, even with
+ * {@link WebgpuGraphicsDevice#asyncPipelines} on: the mip chain is rendered the moment a texture is
+ * uploaded, so a pending pipeline would leave the texture with a single level. A format used in
+ * play is warmed instead with {@link WebgpuMipmapRenderer#precompile}, which compiles off thread.
+ *
  * @ignore
  */
 class WebgpuMipmapRenderer {
@@ -26,6 +31,22 @@ class WebgpuMipmapRenderer {
      * @private
      */
     pipelineCache = new Map();
+
+    /**
+     * The formats precompile is compiling, and so their number is the pending count.
+     *
+     * @type {Set<string>}
+     * @private
+     */
+    compiling = new Set();
+
+    /**
+     * Pipelines created synchronously inside generate, which can stall the frame: the number of
+     * texture formats that were not precompiled.
+     *
+     * @type {number}
+     */
+    syncCreated = 0;
 
     constructor(device) {
         this.device = device;
@@ -45,7 +66,82 @@ class WebgpuMipmapRenderer {
     destroy() {
         this.shader.destroy();
         this.shader = null;
-        this.pipelineCache.clear();
+        this.pipelineCache = null;
+    }
+
+    /**
+     * The number of asynchronous compiles started by precompile that have not settled.
+     *
+     * @type {number}
+     */
+    get pending() {
+        return this.compiling.size;
+    }
+
+    /**
+     * @param {GPUTextureFormat} format - The texture format.
+     * @returns {GPURenderPipelineDescriptor} The descriptor of the pipeline for the format.
+     * @private
+     */
+    getDescriptor(format) {
+
+        /** @type {WebgpuShader} */
+        const webgpuShader = this.shader.impl;
+
+        return {
+            layout: 'auto',
+            vertex: {
+                module: webgpuShader.getVertexShaderModule(),
+                entryPoint: webgpuShader.vertexEntryPoint
+            },
+            fragment: {
+                module: webgpuShader.getFragmentShaderModule(),
+                entryPoint: webgpuShader.fragmentEntryPoint,
+                targets: [{
+                    format: format
+                }]
+            },
+            primitive: {
+                topology: 'triangle-strip'
+            }
+        };
+    }
+
+    /**
+     * Compiles the mipmap pipelines of the given texture formats with createRenderPipelineAsync, so
+     * that the first texture of each format does not create one synchronously inside generate. A
+     * format whose pipeline already exists, or is being compiled, is skipped. Counted by
+     * {@link WebgpuGraphicsDevice#pendingPipelines} while compiling.
+     *
+     * @param {GPUTextureFormat[]} formats - The texture formats, for example 'rgba8unorm',
+     * 'rgba8unorm-srgb' and 'rgba16float'.
+     * @returns {Promise<void>} Resolves once all the pipelines are compiled. Never rejects: a
+     * failed compile leaves the format to be created synchronously by generate.
+     */
+    precompile(formats) {
+        const wgpu = this.device.wgpu;
+        const promises = [];
+        if (typeof wgpu.createRenderPipelineAsync !== 'function') {
+            return Promise.resolve();
+        }
+        for (const format of formats) {
+            if (this.pipelineCache.has(format) || this.compiling.has(format)) continue;
+
+            this.compiling.add(format);
+            promises.push(wgpu.createRenderPipelineAsync(this.getDescriptor(format)).then((pipeline) => {
+                this.compiling.delete(format);
+
+                // generate may have created it synchronously meanwhile, or the renderer was destroyed
+                if (this.pipelineCache && !this.pipelineCache.has(format)) {
+                    DebugHelper.setLabel(pipeline, `RenderPipeline-MipmapRenderer-${format}`);
+                    this.pipelineCache.set(format, pipeline);
+                }
+            }, (error) => {
+                this.compiling.delete(format);
+                Debug.warn(`Asynchronous mipmap pipeline creation failed for ${format}, it is created synchronously instead.`, error);
+            }));
+        }
+        return Promise.all(promises).then(() => {});
     }
 
     /**
@@ -74,26 +170,8 @@ class WebgpuMipmapRenderer {
         // Get or create cached pipeline for this texture format
         let pipeline = this.pipelineCache.get(format);
         if (!pipeline) {
-            /** @type {WebgpuShader} */
-            const webgpuShader = this.shader.impl;
-
-            pipeline = wgpu.createRenderPipeline({
-                layout: 'auto',
-                vertex: {
-                    module: webgpuShader.getVertexShaderModule(),
-                    entryPoint: webgpuShader.vertexEntryPoint
-                },
-                fragment: {
-                    module: webgpuShader.getFragmentShaderModule(),
-                    entryPoint: webgpuShader.fragmentEntryPoint,
-                    targets: [{
-                        format: format
-                    }]
-                },
-                primitive: {
-                    topology: 'triangle-strip'
-                }
-            });
+            this.syncCreated++;
+            pipeline = wgpu.createRenderPipeline(this.getDescriptor(format));
             DebugHelper.setLabel(pipeline, `RenderPipeline-MipmapRenderer-${format}`);
             this.pipelineCache.set(format, pipeline);
         }

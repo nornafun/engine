@@ -12,6 +12,11 @@ import webgpuDepthResolve from '../shader-chunks/frag/webgpu-depth-resolve.js';
 /**
  * A WebGPU helper class implementing custom resolve of multi-sampled textures.
  *
+ * Its render pipelines are always created synchronously on first use, regardless of
+ * {@link WebgpuGraphicsDevice#asyncPipelines}: a resolve runs at the end of a render pass and its
+ * output is read at once, so it cannot be skipped. It is only used by multi-sampled targets, and
+ * there are a handful of format and mode combinations.
+ *
  * @ignore
  */
 class WebgpuResolver {
