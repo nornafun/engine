@@ -247,6 +247,20 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
     asyncPipelines = false;
 
     /**
+     * When true, {@link WebgpuDynamicBuffers} writes its used ranges to the gpu buffer with
+     * `queue.writeBuffer` at submit, instead of copying from a CPU-mapped staging buffer and
+     * remapping it with `mapBufferAsync` once the submit's command buffers finish. `writeBuffer`
+     * copies from a plain CPU-side ArrayBuffer and the browser schedules the GPU upload itself, so
+     * there is no per-submit `mapBufferAsync` round trip and no staging ring to wait on - at the
+     * cost of the browser controlling when the copy happens, which `mapBufferAsync` let the engine
+     * pace with pending submits. Off by default: unproven on more than this one device and this
+     * is new, so the default path (staging + mapBufferAsync) is unchanged.
+     *
+     * @type {boolean}
+     */
+    dynamicBuffersWriteBuffer = false;
+
+    /**
      * True while the draw calls of the current multi-draw run (first to last) are being skipped,
      * because the pipeline of its first call is still compiling.
      *
