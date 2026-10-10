@@ -14,8 +14,11 @@ import { PostEffectQueue } from './post-effect-queue.js';
  * @import { LayerComposition } from '../../../scene/composition/layer-composition.js'
  * @import { Layer } from '../../../scene/layer.js'
  * @import { Mat4 } from '../../../core/math/mat4.js'
+ * @import { ComputePass } from '../../../platform/graphics/compute-pass.js'
  * @import { FramePass } from '../../../platform/graphics/frame-pass.js'
  * @import { RenderTarget } from '../../../platform/graphics/render-target.js'
+ * @import { SceneColorMapHandle } from '../../../platform/graphics/scene-color-map-handle.js'
+ * @import { SceneDepthMapHandle } from '../../../platform/graphics/scene-depth-map-handle.js'
  * @import { FogParams } from '../../../scene/fog-params.js'
  * @import { Vec2 } from '../../../core/math/vec2.js'
  * @import { Vec3 } from '../../../core/math/vec3.js'
@@ -244,6 +247,33 @@ class CameraComponent extends Component {
      */
     get framePasses() {
         return this._camera.framePasses;
+    }
+
+    /**
+     * Gets the frame passes which execute before the camera's main scene rendering, after its
+     * directional shadow passes. When rendering multiple XR views, they execute for each view,
+     * apart from a compute pass, which executes once, as selected by
+     * {@link ComputePass#xrViewIndex}. Add passes to the array, or remove them from it, to change
+     * them.
+     *
+     * @type {FramePass[]}
+     * @ignore
+     */
+    get beforePasses() {
+        return this._camera.beforePasses;
+    }
+
+    /**
+     * Gets the frame passes which execute after everything the camera renders in the frame,
+     * including its frame passes when it uses those, and before the cameras rendering after it.
+     * When rendering multiple XR views, they execute once, after all the views. Add passes to the
+     * array, or remove them from it, to change them.
+     *
+     * @type {FramePass[]}
+     * @ignore
+     */
+    get afterPasses() {
+        return this._camera.afterPasses;
     }
 
     /**
@@ -997,6 +1027,30 @@ class CameraComponent extends Component {
 
     get renderSceneDepthMap() {
         return this._renderSceneDepthMap > 0;
+    }
+
+    /**
+     * Gets the handle to the scene depth map of this camera. The handle is the same object for the
+     * lifetime of the camera, and identifies the depth map the camera rendered most recently. The
+     * camera only renders the depth map when requested, see {@link CameraComponent#requestSceneDepthMap},
+     * or when its {@link CameraFrame} is configured to.
+     *
+     * @type {SceneDepthMapHandle}
+     */
+    get sceneDepthMapHandle() {
+        return this._camera.sceneDepthMapHandle;
+    }
+
+    /**
+     * Gets the handle to the scene color map of this camera. The handle is the same object for the
+     * lifetime of the camera, and identifies the color map the camera rendered most recently. The
+     * camera only renders the color map when requested, see {@link CameraComponent#requestSceneColorMap},
+     * or when its {@link CameraFrame} is configured to.
+     *
+     * @type {SceneColorMapHandle}
+     */
+    get sceneColorMapHandle() {
+        return this._camera.sceneColorMapHandle;
     }
 
     /**

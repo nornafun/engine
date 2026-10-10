@@ -4,9 +4,9 @@ import { Mat4 } from '../../core/math/mat4.js';
 import { Vec2 } from '../../core/math/vec2.js';
 import { Vec3 } from '../../core/math/vec3.js';
 import { BoundingBox } from '../../core/shape/bounding-box.js';
-import { Color } from '../../core/math/color.js';
 import { GSplatPlacement } from './gsplat-placement.js';
 import { GsplatAllocId } from './gsplat-alloc-id.js';
+import { getLodDebugColors, lodDebugColorIndex } from './gsplat-lod-colors.js';
 import { GSPLAT_DEBUG_NODE_AABBS, PROJECTION_ORTHOGRAPHIC } from '../constants.js';
 
 /**
@@ -26,20 +26,11 @@ const _tempDebugAabb = new BoundingBox();
 // tan(22.5deg) for the engine's default 45-degree vertical FOV, used as the FOV compensation reference
 const REF_TAN_HALF_FOV = Math.tan(22.5 * math.DEG_TO_RAD);
 
-// Load priority tiers, see GSplatOctreeInstance#applyLodChanges. A tier's priorities lie in
+// Load priority tiers, see GSplatOctreeInstance#requestFile. A tier's priorities lie in
 // [tier, tier + 1), so a higher tier always loads first.
 const LOAD_TIER_PREFETCH = 0;
 const LOAD_TIER_SWITCH = 1;
 const LOAD_TIER_VISIBLE = 2;
-
-// Color instances used by debug wireframe rendering for LOD visualization
-const _lodColors = [
-    new Color(1, 0, 0),
-    new Color(0, 1, 0),
-    new Color(0, 0, 1),
-    new Color(1, 1, 0),
-    new Color(1, 0, 1)
-];
 
 /**
  * Stores LOD state for a single octree node.
@@ -61,8 +52,8 @@ class NodeInfo {
     /**
      * Squared world-space distance from the camera to this node, with the FOV compensation and
      * the behind-camera penalty folded in. The only way camera position influences LOD selection,
-     * and what orders loads within a priority tier. Kept squared so the per-node pass needs no
-     * square root - every consumer works in squared or log space.
+     * and what orders loads of the same LOD level within a priority tier. Kept squared so the
+     * per-node pass needs no square root - every consumer works in squared or log space.
      */
     worldDistanceSq = 0;
 
@@ -430,9 +421,9 @@ class GSplatOctreeInstance {
      * @param {number} nodeIndex - The octree node index.
      * @param {number} desiredLodIndex - Currently selected LOD for display (may be coarser than optimal).
      * @param {number} optimalLodIndex - Target optimal LOD.
-     * @param {number} priority - Load priority for the prefetched file.
+     * @param {number} distanceRank - The node's distance rank, see {@link GSplatOctreeInstance#requestFile}.
      */
-    prefetchNextLod(nodeIndex, desiredLodIndex, optimalLodIndex, priority) {
+    prefetchNextLod(nodeIndex, desiredLodIndex, optimalLodIndex, distanceRank) {
         if (desiredLodIndex === -1 || optimalLodIndex === -1) return;
 
         // If we're already at optimal but it's not loaded yet, request it, otherwise step one
@@ -443,7 +434,7 @@ class GSplatOctreeInstance {
         if (targetLod < 0) return;
 
         const fi = this.octree.nodes[nodeIndex].lods[targetLod].fileIndex;
-        if (fi !== -1 && !this.requestFile(fi, priority)) {
+        if (fi !== -1 && !this.requestFile(fi, LOAD_TIER_PREFETCH, distanceRank)) {
             this.prefetchPending.add(fi);
         }
     }
@@ -452,14 +443,23 @@ class GSplatOctreeInstance {
      * Requests a file for this LOD update, unless it is already loaded. A file requested more than
      * once keeps its highest priority.
      *
+     * The priority is ranked by tier first. Within a tier, coarser LOD levels load first, so the
+     * whole view refines one level at a time instead of the nearest nodes refining all the way
+     * before farther ones get their first step. Within a level, nearer loads first.
+     *
      * @param {number} fileIndex - The file index.
-     * @param {number} priority - Load priority, higher loads first.
+     * @param {number} tier - The load tier, one of the LOAD_TIER_* values.
+     * @param {number} distanceRank - The requesting node's distance mapped monotonically into
+     * [0, 1), higher is nearer.
      * @returns {boolean} True if the file is already loaded.
      */
-    requestFile(fileIndex, priority) {
+    requestFile(fileIndex, tier, distanceRank) {
         if (this.octree.pollFileResource(fileIndex)) {
             return true;
         }
+
+        const octree = this.octree;
+        const priority = tier + (octree.files[fileIndex].lodLevel + distanceRank) / octree.lodLevels;
 
         const current = this._fileRequests.get(fileIndex);
         if (current === undefined || priority > current) {
@@ -623,9 +623,10 @@ class GSplatOctreeInstance {
      *
      * Also requests every file this instance still waits for, with a load priority. The priority
      * is ranked by tier first - a node that shows nothing yet, then a node waiting to switch LOD,
-     * then a prefetch of the next finer level - and within a tier by the node's
-     * {@link NodeInfo#worldDistanceSq}, so the view fills with coarse data first and then refines
-     * nearest the camera first. A file shared by several nodes takes the highest priority of them.
+     * then a prefetch of the next finer level - and within a tier by LOD level, coarsest first,
+     * and then by the node's {@link NodeInfo#worldDistanceSq}. So the view fills with coarse data
+     * first and then refines one level at a time across the whole view, each level nearest the
+     * camera first. A file shared by several nodes takes the highest priority of them.
      * The requests are submitted to the octree, which combines them with those of its other
      * instances and issues them in {@link GSplatOctree#flushRequests}.
      *
@@ -744,28 +745,28 @@ class GSplatOctreeInstance {
                 }
             }
 
-            // Priority within a tier, nearer first: inverse square distance mapped monotonically
-            // into [0, 1).
-            const rank = 1 / (1 + Math.max(nodeInfo.worldDistanceSq, 1e-12));
+            // Nearer first within a LOD level: inverse square distance mapped monotonically into
+            // [0, 1).
+            const distanceRank = 1 / (1 + Math.max(nodeInfo.worldDistanceSq, 1e-12));
 
             // request the file the node waits for, to become visible or to switch LOD
             const visibleAddFi = this.pendingVisibleAdds.get(nodeIndex);
             if (visibleAddFi !== undefined) {
-                this.requestFile(visibleAddFi, LOAD_TIER_VISIBLE + rank);
+                this.requestFile(visibleAddFi, LOAD_TIER_VISIBLE, distanceRank);
             }
             const pendingSwitch = this.pendingDecrements.get(nodeIndex);
             if (pendingSwitch) {
-                this.requestFile(pendingSwitch.newFileIndex, LOAD_TIER_SWITCH + rank);
+                this.requestFile(pendingSwitch.newFileIndex, LOAD_TIER_SWITCH, distanceRank);
             }
 
             // Prefetch loading: request only the next-better LOD toward optimal
-            this.prefetchNextLod(nodeIndex, desiredLodIndex, optimalLodIndex, LOAD_TIER_PREFETCH + rank);
+            this.prefetchNextLod(nodeIndex, desiredLodIndex, optimalLodIndex, distanceRank);
         }
 
         // Every placement still waiting for its file must stay requested, or flushRequests would
         // withdraw it. The nodes above cover these with their own priorities, this is only a floor.
         for (const fileIndex of this.pending) {
-            this.requestFile(fileIndex, LOAD_TIER_PREFETCH);
+            this.requestFile(fileIndex, LOAD_TIER_PREFETCH, 0);
         }
 
         octree.submitRequests(this, this._fileRequests);
@@ -1018,10 +1019,11 @@ class GSplatOctreeInstance {
             if (scene.gsplat.debug === GSPLAT_DEBUG_NODE_AABBS) {
                 const modelMat = this.placement.node.getWorldTransform();
                 const nodes = this.octree.nodes;
+                const lodColors = getLodDebugColors();
                 for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
                     const lodIndex = this.nodeInfos[nodeIndex].currentLod;
                     if (lodIndex >= 0) {
-                        const color = _lodColors[Math.min(lodIndex, _lodColors.length - 1)];
+                        const color = lodColors[lodDebugColorIndex(lodIndex)];
                         _tempDebugAabb.setFromTransformedAabb(nodes[nodeIndex].bounds, modelMat);
                         scene.immediate.drawWireAlignedBox(_tempDebugAabb.getMin(), _tempDebugAabb.getMax(), color, true, scene.defaultDrawLayer);
                     }

@@ -260,6 +260,14 @@ class Bloom {
      * @step 0.01
      */
     threshold = 0;
+
+    /**
+     * Whether the bloom is generated from the full resolution scene instead of a half resolution
+     * copy, for a sharper and more stable glow, at a higher performance cost.
+     *
+     * @visibleif {enabled}
+     */
+    highQuality = false;
 }
 
 /**
@@ -776,6 +784,14 @@ class CameraFrame extends Script {
      */
     volumetricFog = new VolumetricFog();
 
+    /**
+     * The engine {@link EngineCameraFrame | CameraFrame} this script drives. Created in
+     * `initialize`, so it is undefined until the script is first enabled. This is the handle other
+     * scripts on the entity use to register their own effects with the frame - look the script up by
+     * type, `entity.script.get(CameraFrame)`, and call `addEffect` on this.
+     *
+     * @type {EngineCameraFrame}
+     */
     engineCameraFrame;
 
     initialize() {
@@ -837,6 +853,7 @@ class CameraFrame extends Script {
         if (bloom.enabled) {
             dstBloom.blurLevel = bloom.blurLevel;
             dstBloom.threshold = bloom.threshold;
+            dstBloom.highQuality = bloom.highQuality;
         }
 
         // grading

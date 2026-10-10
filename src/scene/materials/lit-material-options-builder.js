@@ -91,7 +91,7 @@ class LitMaterialOptionsBuilder {
         litOptions.useIridescence = material.hasIridescence;
         litOptions.useMetalness = material.hasMetalness;
         litOptions.useDynamicRefraction = material.dynamicRefraction;
-        litOptions.dispersion = material.dispersion > 0;
+        litOptions.dispersion = material.hasDispersion;
 
         litOptions.vertexColors = false;
         litOptions.lightMapEnabled = material.hasLighting;
@@ -100,7 +100,6 @@ class LitMaterialOptionsBuilder {
         litOptions.useNormals = material.hasNormals;
         litOptions.useClearCoatNormals = material.hasClearCoatNormals;
         litOptions.useAo = material.hasAo;
-        litOptions.diffuseMapEnabled = material.hasDiffuseMap;
     }
 
     static updateEnvOptions(litOptions, material, scene, renderParams) {

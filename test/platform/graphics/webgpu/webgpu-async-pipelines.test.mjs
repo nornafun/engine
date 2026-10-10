@@ -130,10 +130,11 @@ describe('WebGPU asynchronous pipelines (Dawn)', function () {
             renderer = Object.create(WebgpuMipmapRenderer.prototype);
             Object.assign(renderer, {
                 device: { wgpu },
-                shader: { impl },
+                shaders: new Map([['2d', { impl }]]),
                 pipelineCache: new Map(),
                 compiling: new Set(),
-                syncCreated: 0
+                syncCreated: 0,
+                destroyed: false
             });
         });
 
@@ -146,7 +147,7 @@ describe('WebGPU asynchronous pipelines (Dawn)', function () {
 
             expect(renderer.pending).to.equal(0);
             expect(renderer.pipelineCache.size).to.equal(2);
-            expect(renderer.pipelineCache.get('rgba16float')).to.be.an.instanceof(GPURenderPipeline);
+            expect(renderer.pipelineCache.get('2d:rgba16float')).to.be.an.instanceof(GPURenderPipeline);
             expect(asyncCreate.callCount).to.equal(2);
 
             await renderer.precompile(['rgba8unorm', 'rgba16float']);
@@ -157,9 +158,9 @@ describe('WebGPU asynchronous pipelines (Dawn)', function () {
         it('keeps a pipeline generate created meanwhile, and resolves without error', async function () {
             const promise = renderer.precompile(['rgba8unorm']);
             const sync = {};
-            renderer.pipelineCache.set('rgba8unorm', sync);
+            renderer.pipelineCache.set('2d:rgba8unorm', sync);
             await promise;
-            expect(renderer.pipelineCache.get('rgba8unorm')).to.equal(sync);
+            expect(renderer.pipelineCache.get('2d:rgba8unorm')).to.equal(sync);
         });
 
         it('resolves when a compile fails', async function () {

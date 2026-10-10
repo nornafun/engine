@@ -92,12 +92,15 @@ export { createGraphicsDevice } from './platform/graphics/graphics-device-create
 export { BindGroupFormat, BindUniformBufferFormat, BindTextureFormat, BindStorageTextureFormat, BindStorageBufferFormat } from './platform/graphics/bind-group-format.js';
 export { BlendState } from './platform/graphics/blend-state.js';
 export { Compute } from './platform/graphics/compute.js';
+export { ComputePass } from './platform/graphics/compute-pass.js';
 export { DepthState } from './platform/graphics/depth-state.js';
 export { DrawCommands } from './platform/graphics/draw-commands.js';
 export { GraphicsDevice } from './platform/graphics/graphics-device.js';
 export { IndexBuffer } from './platform/graphics/index-buffer.js';
 export { RenderTarget } from './platform/graphics/render-target.js';
 export { RenderPass } from './platform/graphics/render-pass.js';
+export { SceneColorMapHandle } from './platform/graphics/scene-color-map-handle.js';
+export { SceneDepthMapHandle } from './platform/graphics/scene-depth-map-handle.js';
 export { ScopeId } from './platform/graphics/scope-id.js';
 export { ScopeSpace } from './platform/graphics/scope-space.js';
 export { Shader } from './platform/graphics/shader.js';
