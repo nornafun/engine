@@ -2,6 +2,7 @@ import { Shader } from '../shader.js';
 import { SHADERLANGUAGE_WGSL } from '../constants.js';
 import { Debug, DebugHelper } from '../../../core/debug.js';
 import { DebugGraphics } from '../debug-graphics.js';
+import { WebgpuDebug } from './webgpu-debug.js';
 import webgpuMipmap from '../shader-chunks/frag/webgpu-mipmap.js';
 import webgpuMipmap3d from '../shader-chunks/frag/webgpu-mipmap-3d.js';
 
@@ -290,6 +291,8 @@ class WebgpuMipmapRenderer {
         }
 
         const device = this.device;
+        WebgpuDebug.validate(device);
+
         const unfilterable = this.isUnfilterable(textureDescr.format);
         const pipeline = this.getPipeline(unfilterable ? '2d-unfilterable' : '2d', textureDescr.format);
         const sampler = unfilterable ? null : this.minSampler;
@@ -349,6 +352,8 @@ class WebgpuMipmapRenderer {
 
         // clear invalidated state
         device.pipeline = null;
+
+        WebgpuDebug.end(device, 'Mipmap generation', { texture, layer });
     }
 
     /**
@@ -363,6 +368,8 @@ class WebgpuMipmapRenderer {
     generateVolume(webgpuTexture) {
 
         const device = this.device;
+        WebgpuDebug.validate(device);
+
         const texture = webgpuTexture.texture;
         const textureDescr = webgpuTexture.desc;
         const unfilterable = this.isUnfilterable(textureDescr.format);
@@ -420,6 +427,8 @@ class WebgpuMipmapRenderer {
 
         // clear invalidated state
         device.pipeline = null;
+
+        WebgpuDebug.end(device, 'Mipmap generation', { texture });
     }
 }
 
