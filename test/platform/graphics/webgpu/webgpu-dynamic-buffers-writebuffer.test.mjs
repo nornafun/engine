@@ -30,7 +30,7 @@ describe('WebGPU dynamic buffers writeBuffer path (Dawn)', function () {
     });
 
     // real prototype (so BindGroupFormat's createBindGroupFormatImpl etc. work), minimum state set
-    const fakeDevice = (writeBuffer) => Object.assign(Object.create(WebgpuGraphicsDevice.prototype), {
+    const fakeDevice = writeBuffer => Object.assign(Object.create(WebgpuGraphicsDevice.prototype), {
         wgpu,
         dynamicBuffersWriteBuffer: writeBuffer,
         _vram: { ub: 0 },
