@@ -100,6 +100,7 @@ class AppStats {
             materials: 0,
             cameras: 0,
             shadowMapUpdates: 0,
+            storageSlotCopies: 0,
             shadowMapTime: 0,
             depthMapTime: 0, // deprecated
             forwardTime: 0,
@@ -432,6 +433,7 @@ class AppStats {
         stats.materials = renderer._materialSwitches;
         stats.shaders = device._shaderSwitchesPerFrame;
         stats.shadowMapUpdates = renderer._shadowMapUpdates;
+        stats.storageSlotCopies = renderer._storageSlotsCopied;
         stats.shadowMapTime = renderer._shadowMapTime;
         stats.depthMapTime = renderer._depthMapTime;
         stats.forwardTime = renderer._forwardTime;
@@ -448,6 +450,7 @@ class AppStats {
         renderer._camerasRendered = 0;
         renderer._materialSwitches = 0;
         renderer._shadowMapUpdates = 0;
+        renderer._storageSlotsCopied = 0;
         device._shaderSwitchesPerFrame = 0;
         renderer._cullTime = 0;
         renderer._layerCompositionUpdateTime = 0;

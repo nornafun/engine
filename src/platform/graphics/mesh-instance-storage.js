@@ -173,15 +173,45 @@ class MeshInstanceStorage {
         data[o + 26] = normal[8];
 
         // all draws recorded before the next submit read the data written last, so a slot is
-        // expected to be written once between the submits
+        // written once between the submits, see Renderer#updateStorageSlot
         Debug.call(() => {
             if (this._dirtyBits[slot >> 5] & (1 << (slot & 31))) {
-                Debug.warnOnce('The transform of a node changed after its mesh instance was drawn in this frame. On WebGPU all draws of a mesh instance in a frame use its last transform, so transforms need to be final before the frame renders.');
+                Debug.warnOnce('A mesh instance storage slot was written again before the upload. All draws recorded before a submit read the last data written to a slot.');
             }
         });
 
         this._dirtyBits[slot >> 5] |= 1 << (slot & 31);
         this._dirty = true;
+    }
+
+    /**
+     * Returns true when the slot was written since the last upload, so that the draws recorded
+     * since then read what was written.
+     *
+     * @param {number} slot - The slot.
+     * @returns {boolean} True if the slot is waiting to be uploaded.
+     */
+    isWritten(slot) {
+        return (this._dirtyBits[slot >> 5] & (1 << (slot & 31))) !== 0;
+    }
+
+    /**
+     * Returns true when the model matrix held by the slot is equal to the given one. The normal
+     * matrix is derived from the model matrix, so it is not compared.
+     *
+     * @param {number} slot - The slot.
+     * @param {Float32Array} model - The 16 floats of the model matrix.
+     * @returns {boolean} True if the slot already holds the matrix.
+     */
+    holdsModel(slot, model) {
+        const data = this.data;
+        const o = slot * FLOATS_PER_SLOT;
+        for (let i = 0; i < 16; i++) {
+            if (data[o + i] !== model[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

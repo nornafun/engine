@@ -170,6 +170,89 @@ describe('Mesh instance storage', function () {
         expectSlots(meshInstances);
     });
 
+    describe('a node posed differently by two cameras of a frame', function () {
+
+        let box, meshInstance, draws, posings;
+
+        // the cameras render in order, the scene prerender event of each poses the node for it
+        beforeEach(function () {
+            if (!app.graphicsDevice.isWebGPU) this.skip();
+
+            const secondCamera = new Entity('camera2');
+            secondCamera.addComponent('camera');
+            secondCamera.setPosition(0, 0, 60);
+            app.root.addChild(secondCamera);
+
+            [box] = addBoxes(1, material());
+            meshInstance = box.render.meshInstances[0];
+
+            posings = 0;
+            draws = [];
+            const renderer = app.renderer;
+            const update = renderer.updateStorageSlot.bind(renderer);
+            sinon.stub(renderer, 'updateStorageSlot').callsFake((mi, shader) => {
+                const slot = update(mi, shader);
+                if (mi === meshInstance) {
+                    draws.push({ slot, x: mi.node.getPosition().x });
+                }
+                return slot;
+            });
+        });
+
+        const slotX = (slot) => {
+            app.graphicsDevice.submit();
+            const data = gpuCopies.get(app.graphicsDevice.meshInstanceStorage.buffer.impl);
+            return data[slot * 28 + 12];
+        };
+
+        it('draws its own matrix in each pass, from a slot of its own', function () {
+            app.scene.on('prerender', () => {
+                box.setPosition(10 + posings++, 0, 0);
+            });
+            app.render();
+
+            const xs = new Set(draws.map(draw => draw.x));
+            expect(xs.size).to.be.above(1);
+            expect(new Set(draws.map(draw => draw.slot)).size).to.equal(xs.size);
+            for (const draw of draws) {
+                expect(slotX(draw.slot), `slot ${draw.slot}`).to.be.closeTo(draw.x, 1e-5);
+            }
+            expect(app.renderer._storageSlotsCopied).to.equal(xs.size - 1);
+        });
+
+        it('reuses the slots released by the copies once the frame is submitted', function () {
+            app.scene.on('prerender', () => {
+                box.setPosition(10 + posings++, 0, 0);
+            });
+            app.render();
+            const storage = app.graphicsDevice.meshInstanceStorage;
+            const count = storage.count;
+
+            // the same two poses per frame take the same number of slots, not more
+            for (let i = 0; i < 4; i++) {
+                posings = 0;
+                app.render();
+            }
+            expect(storage.count).to.be.at.most(count + 2);
+        });
+
+        it('copies no slot when the node is not posed again, or moves between frames only', function () {
+            app.render();
+            const slot = meshInstance.storageSlot;
+            expect(app.renderer._storageSlotsCopied).to.equal(0);
+            expect(new Set(draws.map(draw => draw.slot))).to.deep.equal(new Set([slot]));
+
+            // a version marked dirty without a change of the transform does not copy either
+            box.setPosition(1, 2, 3);
+            app.render();
+            meshInstance.storageSlotVersion = -1;
+            app.render();
+            expect(app.renderer._storageSlotsCopied).to.equal(0);
+            expect(meshInstance.storageSlot).to.equal(slot);
+            expect(slotX(slot)).to.be.closeTo(1, 1e-5);
+        });
+    });
+
     it('keeps the slots across a device loss, and uploads them all to the recreated buffer', function () {
         if (!app.graphicsDevice.isWebGPU) this.skip();
 

@@ -377,6 +377,7 @@ class Renderer {
         this._skinDrawCalls = 0;
         this._instancedDrawCalls = 0;
         this._shadowMapUpdates = 0;
+        this._storageSlotsCopied = 0;
         this._numDrawCallsCulled = 0;
         this._camerasRendered = 0;
         this._lightClusters = 0;
@@ -1207,6 +1208,11 @@ class Renderer {
      * when the mesh instance was given a different node. When the allocation grows the storage, the
      * view bind group of the shader, which holds the storage, is updated and bound again.
      *
+     * All draws recorded before a submit read the data of a slot as uploaded by it. A node posed
+     * differently by two passes of a frame, for example by the callbacks of two cameras, therefore
+     * moves to a new slot when its transform changes after its slot was written in the frame, and
+     * the draws recorded earlier keep the old slot, which is reused once the frame is submitted.
+     *
      * @param {MeshInstance} meshInstance - The mesh instance being drawn.
      * @param {Shader} shader - The shader of the draw, set on the device.
      * @returns {number} The slot.
@@ -1215,7 +1221,27 @@ class Renderer {
 
         const meshInstanceStorage = this.device.meshInstanceStorage;
         let slot = meshInstance.storageSlot;
-        if (slot < 0) {
+        let allocated = slot < 0;
+
+        // a node marked dirty after the transforms were updated this frame is written again the next
+        // frame, once its transform is updated
+        const node = meshInstance.node;
+        const version = node._dirtyWorld ? -1 : node._aabbVer;
+        let upToDate = false;
+        if (!allocated && meshInstance.storageSlotVersion !== node._aabbVer && meshInstanceStorage.isWritten(slot)) {
+
+            // the transform changed after the slot was written for the draws recorded already, which
+            // would all draw it posed as last. A version marked dirty without a change is not one.
+            if (meshInstanceStorage.holdsModel(slot, node.worldTransform.data)) {
+                upToDate = true;
+            } else {
+                meshInstanceStorage.free(slot);
+                this._storageSlotsCopied++;
+                allocated = true;
+            }
+        }
+
+        if (allocated) {
             slot = meshInstanceStorage.allocate();
             meshInstance.storageSlot = slot;
             meshInstance.storageSlotVersion = -1;
@@ -1228,12 +1254,11 @@ class Renderer {
             }
         }
 
-        // a node marked dirty after the transforms were updated this frame is written again the next
-        // frame, once its transform is updated
-        const node = meshInstance.node;
         if (meshInstance.storageSlotVersion !== node._aabbVer) {
-            meshInstance.storageSlotVersion = node._dirtyWorld ? -1 : node._aabbVer;
-            meshInstanceStorage.write(slot, node.worldTransform.data, node.normalMatrix.data);
+            meshInstance.storageSlotVersion = version;
+            if (!upToDate) {
+                meshInstanceStorage.write(slot, node.worldTransform.data, node.normalMatrix.data);
+            }
         }
 
         return slot;
