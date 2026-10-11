@@ -4,7 +4,7 @@ import {
     SHADERSTAGE_FRAGMENT, SHADERSTAGE_VERTEX, UNIFORM_BUFFER_DEFAULT_SLOT_NAME
 } from '../../platform/graphics/constants.js';
 import { DeviceCache } from '../../platform/graphics/device-cache.js';
-import { UniformBufferFormat, UniformFormat } from '../../platform/graphics/uniform-buffer-format.js';
+import { UniformBufferFormat, UniformFormat, packUniforms } from '../../platform/graphics/uniform-buffer-format.js';
 
 /**
  * @import { GraphicsDevice } from '../../platform/graphics/graphics-device.js'
@@ -34,14 +34,33 @@ class MaterialUniformBufferLayout {
          */
         this.key = key;
 
+        // the required properties are packed first and the optional ones after them, so that the
+        // required part of the buffer has the same layout whichever optional properties follow
+        const required = properties.filter(property => !property.optional);
+        const optional = properties.filter(property => property.optional);
+        const toUniforms = list => packUniforms(list.map((property) => {
+            return new UniformFormat(property.uniformName, property.type, property.count);
+        }));
+
         /**
          * The format of the material uniform buffer.
          *
          * @type {UniformBufferFormat}
          */
-        this.uniformBufferFormat = new UniformBufferFormat(device, properties.map((property) => {
-            return new UniformFormat(property.uniformName, property.type, property.count);
-        }), { pack: true });
+        this.uniformBufferFormat = new UniformBufferFormat(device, [...toUniforms(required), ...toUniforms(optional)]);
+
+        /**
+         * The format of the leading part of the material uniform buffer holding the required
+         * properties only, the uniform buffer format itself when the layout has no optional
+         * property. A shader reading none of the optional properties is processed against it, so
+         * that materials whose layouts differ in their optional properties alone share the shader.
+         * Its uniforms are at the same offsets as in the whole buffer, which is bound in full.
+         *
+         * @type {UniformBufferFormat}
+         */
+        this.requiredUniformBufferFormat = optional.length ?
+            new UniformBufferFormat(device, toUniforms(required)) :
+            this.uniformBufferFormat;
 
         /**
          * The textures of the bind group, in the order of its texture slots.

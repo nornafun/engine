@@ -25,7 +25,7 @@ import { Material } from './material.js';
 import { MaterialProperty, convertColorToLinear, convertFloat } from './material-property.js';
 import { getMaterialLayout } from './material-uniform-buffer-layout.js';
 import { getTextureDescriptors, getTextureIdentifiers, getTextureSharing } from './standard-material-textures.js';
-import { StandardMaterialMapTransforms } from './standard-material-map-transforms.js';
+import { StandardMaterialMapTransforms, usesMapTransforms } from './standard-material-map-transforms.js';
 import { StandardMaterialOptionsBuilder } from './standard-material-options-builder.js';
 import { standardMaterialCubemapParameters, standardMaterialTextureParameters } from './standard-material-parameters.js';
 import { DebugGraphics } from '../../platform/graphics/debug-graphics.js';
@@ -1956,9 +1956,14 @@ class StandardMaterial extends Material {
         const processingOptions = new ShaderProcessorOptions(params.viewUniformFormat, params.vertexFormat, getViewTextures(params.viewUniformFormat));
 
         // the shader is processed against the layout of the material: the format of its uniform
-        // buffer, and the format of its bind group, which declares its textures
+        // buffer, and the format of its bind group, which declares its textures. A shader applying
+        // no texture transform - every shader of the depth, shadow and picking passes without an
+        // alpha tested opacity map transform, and every shader with its maps at the identity
+        // transform - reads none of the transform uniforms, so it is processed against the part of
+        // the buffer before them, and shared by the materials whose layouts differ in them alone
         const layout = getMaterialLayout(device, this.propertyDescriptors, this.getTextureDescriptors(device));
-        processingOptions.uniformFormats[BINDGROUP_MATERIAL] = layout.uniformBufferFormat;
+        processingOptions.uniformFormats[BINDGROUP_MATERIAL] = usesMapTransforms(options) ?
+            layout.uniformBufferFormat : layout.requiredUniformBufferFormat;
         processingOptions.bindGroupFormats[BINDGROUP_MATERIAL] = layout.bindGroupFormat;
 
         const library = getProgramLibrary(device);

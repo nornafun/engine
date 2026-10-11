@@ -209,6 +209,7 @@ class UniformFormat {
  *
  * @param {UniformFormat[]} uniforms - The uniforms.
  * @returns {UniformFormat[]} The uniforms in packing order.
+ * @ignore
  */
 const packUniforms = (uniforms) => {
     const packed = [];
@@ -329,4 +330,4 @@ class UniformBufferFormat {
     }
 }
 
-export { UniformFormat, UniformBufferFormat };
+export { UniformFormat, UniformBufferFormat, packUniforms };

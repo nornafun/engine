@@ -18,9 +18,13 @@ const getTransformProperties = (name) => {
     let properties = _transformProperties.get(name);
     if (!properties) {
         properties = [0, 1].map((half) => {
-            return new MaterialProperty(`${name}MapTransform`, `texture_${name}MapTransform${half}`, UNIFORMTYPE_VEC3, (value, storage, offset, material) => {
+            const property = new MaterialProperty(`${name}MapTransform`, `texture_${name}MapTransform${half}`, UNIFORMTYPE_VEC3, (value, storage, offset, material) => {
                 material._mapTransforms.write(name, half, storage, offset);
             });
+
+            // only a shader applying the transform of the map reads it, see usesMapTransforms
+            property.optional = true;
+            return property;
         });
         _transformProperties.set(name, properties);
         for (const property of properties) {
@@ -28,6 +32,25 @@ const getTransformProperties = (name) => {
         }
     }
     return properties;
+};
+
+/**
+ * Returns true when a shader generated from the options applies the transform of any texture map,
+ * which is what reads the transform uniforms: the vertex shader transforms the uv set of each
+ * sampled map with a transform group, and a map without one, which includes every map at the
+ * identity transform, is sampled with its plain uv set.
+ *
+ * @param {object} options - The standard material options the shader is generated from.
+ * @returns {boolean} True when the shader reads a transform uniform.
+ * @ignore
+ */
+const usesMapTransforms = (options) => {
+    for (const p of _matTex2D.keys()) {
+        if (options[`${p}Map`] && options[`${p}MapTransform`]) {
+            return true;
+        }
+    }
+    return false;
 };
 
 const transformsEqual = (a, b) => {
@@ -340,4 +363,4 @@ class StandardMaterialMapTransforms {
     }
 }
 
-export { StandardMaterialMapTransforms };
+export { StandardMaterialMapTransforms, usesMapTransforms };

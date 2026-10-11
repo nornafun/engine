@@ -2,6 +2,7 @@ import { Color } from '../../core/math/color.js';
 
 /**
  * @import { Material } from './material.js'
+ * @import { MaterialUniformBufferLayout } from './material-uniform-buffer-layout.js'
  */
 
 const _tempColor = new Color();
@@ -65,6 +66,15 @@ class MaterialProperty {
      * @type {string}
      */
     key;
+
+    /**
+     * True for a property only some shaders of the material read. The layout places the optional
+     * properties after all others, so that a shader reading none of them is processed against the
+     * leading part of the layout alone, see {@link MaterialUniformBufferLayout#requiredUniformBufferFormat}.
+     *
+     * @type {boolean}
+     */
+    optional = false;
 
     /**
      * @param {string} name - The public property name.

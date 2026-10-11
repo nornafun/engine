@@ -14,6 +14,7 @@ import {
     PARALLAX_OFFSET,
     SHADERDEF_MORPH_TEXTURE_BASED_INT, SHADERDEF_BATCH,
     FOG_NONE,
+    FRESNEL_SCHLICK,
     REFLECTIONSRC_NONE, REFLECTIONSRC_ENVATLAS, REFLECTIONSRC_ENVATLASHQ, REFLECTIONSRC_CUBEMAP, REFLECTIONSRC_SPHEREMAP,
     AMBIENTSRC_AMBIENTSH, AMBIENTSRC_ENVALATLAS, AMBIENTSRC_CONSTANT,
     SCENETEXTURE_DEPTH
@@ -202,6 +203,12 @@ class StandardMaterialOptionsBuilder {
         options.litOptions.opacityShadowDither = isPrepass ? stdMat.opacityDither : stdMat.opacityShadowDither;
 
         options.litOptions.lights = [];
+
+        // the shader generator replaces the unset fresnel model with Schlick's, and writes it back
+        // to the options, so the minimal options, which do not set it, are keyed apart before and
+        // after their first generation. Set it to what the generator uses, which only the outline
+        // pass reads.
+        options.litOptions.fresnelModel = FRESNEL_SCHLICK;
 
         // the outline pass is a forward pass which outputs the outline color, so it skips the
         // clustered lighting too, and outputs an alpha of 1 with the opacity used by the alpha
