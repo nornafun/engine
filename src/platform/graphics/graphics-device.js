@@ -799,6 +799,7 @@ class GraphicsDevice extends EventHandler {
         this.initOptions.displayFormat ??= DISPLAYFORMAT_LDR;
         this.initOptions.transientColor ??= false;
         this.initOptions.transientDepth ??= false;
+        this.initOptions.meshInstanceStorage ??= true;
 
         // If WebXR is exposed, default to an XR-suitable GPU
         this.initOptions.xrCompatible ??= platform.browser && !!navigator.xr;

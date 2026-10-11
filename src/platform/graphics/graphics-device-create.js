@@ -84,6 +84,11 @@ import { NullGraphicsDevice } from './null/null-graphics-device.js';
  * transient attachment support. Incompatible with a scene depth grab pass (`sceneDepthMap`), a
  * depth prepass, or any depth resolve, as the depth cannot be sampled or copied out. Defaults to
  * false.
+ * @param {boolean} [options.meshInstanceStorage] - Boolean that lets the WebGPU vertex shaders
+ * read the model and normal matrices of mesh instances from a persistent storage buffer instead of
+ * a uniform buffer per draw. Set to false to use the uniform buffers, which is read before the
+ * first shader is generated. Ignored where the device has no vertex stage storage buffers and on
+ * WebGL. Defaults to true.
  * @returns {Promise<GraphicsDevice>} - Promise object representing the created graphics device.
  * It is rejected if none of the device types can be created, with an `AggregateError` whose
  * `errors` contain the error of each device type that failed.

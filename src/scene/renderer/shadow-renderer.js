@@ -110,6 +110,15 @@ class ShadowRenderer {
     _casterLists = [];
 
     /**
+     * The {@link Layer#maxDrawDistance} of the layer each list of {@link ShadowRenderer#_casterLists}
+     * comes from, 0 for casters supplied directly.
+     *
+     * @type {number[]}
+     * @private
+     */
+    _casterDrawDistances = [];
+
+    /**
      * @param {Renderer} renderer - The renderer.
      * @param {LightTextureAtlas} lightTextureAtlas - The shadow map atlas.
      */
@@ -175,20 +184,40 @@ class ShadowRenderer {
         return shadowCam;
     }
 
-    _cullShadowCastersInternal(meshInstances, visible, camera) {
+    _cullShadowCastersInternal(meshInstances, visible, camera, maxDrawDistance = 0, distanceCamera = null) {
 
+        // the distance is measured from the camera of the view, not from the shadow camera, so a
+        // mesh instance culled there casts no shadow either
+        let cx = 0, cy = 0, cz = 0;
+        if (distanceCamera) {
+            const position = distanceCamera.node.getPosition();
+            cx = position.x;
+            cy = position.y;
+            cz = position.z;
+        }
+
+        let distanceCulled = 0;
         const numInstances = meshInstances.length;
         for (let i = 0; i < numInstances; i++) {
             const meshInstance = meshInstances[i];
 
             // test visible here, as _isVisible, which also tests it, is skipped when culling is off
             if (meshInstance.castShadow && meshInstance.visible) {
+
+                const distance = meshInstance.maxDrawDistance || maxDrawDistance;
+                if (distanceCamera && distance > 0 && meshInstance.cull && meshInstance._isBeyondDistance(distance, cx, cy, cz)) {
+                    distanceCulled++;
+                    continue;
+                }
+
                 if (!meshInstance.cull || meshInstance._isVisible(camera)) {
                     meshInstance.visibleThisFrame = true;
                     visible.push(meshInstance);
                 }
             }
         }
+
+        this.renderer._distanceCulled += distanceCulled;
     }
 
     /**
@@ -201,8 +230,11 @@ class ShadowRenderer {
      * @param {MeshInstance[]} visible - The array to store visible mesh instances in.
      * @param {Camera} camera - The camera.
      * @param {MeshInstance[]} [casters] - Optional array of mesh instances to use as casters.
+     * @param {Camera|null} [distanceCamera] - The camera whose view the shadows are for, from which
+     * {@link MeshInstance#maxDrawDistance} is measured. Without it no mesh instance is culled by
+     * distance. Defaults to null.
      */
-    cullShadowCasters(comp, light, visible, camera, casters) {
+    cullShadowCasters(comp, light, visible, camera, casters, distanceCamera = null) {
 
         // event before culling - the camera is null as this is internal (shadow) culling rather
         // than culling for a user camera
@@ -212,7 +244,7 @@ class ShadowRenderer {
 
         const casterLists = this._collectCasterLists(comp, light, casters);
         for (let i = 0; i < casterLists.length; i++) {
-            this._cullShadowCastersInternal(casterLists[i], visible, camera);
+            this._cullShadowCastersInternal(casterLists[i], visible, camera, this._casterDrawDistances[i], distanceCamera);
         }
 
         // group the shadow casters by material and mesh, as the forward renderer does
@@ -239,11 +271,14 @@ class ShadowRenderer {
 
         const lists = this._casterLists;
         lists.length = 0;
+        const distances = this._casterDrawDistances;
+        distances.length = 0;
 
         // if the casters are supplied, use them
         if (casters) {
 
             lists.push(casters);
+            distances.push(0);
 
         } else {    // otherwise, get them from the layer composition
 
@@ -259,6 +294,7 @@ class ShadowRenderer {
                         tempSet.add(layer);
 
                         lists.push(layer.shadowCasters);
+                        distances.push(layer.maxDrawDistance);
                     }
                 }
             }

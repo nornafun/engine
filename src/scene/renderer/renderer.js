@@ -378,6 +378,7 @@ class Renderer {
         this._instancedDrawCalls = 0;
         this._shadowMapUpdates = 0;
         this._storageSlotsCopied = 0;
+        this._distanceCulled = 0;
         this._numDrawCallsCulled = 0;
         this._camerasRendered = 0;
         this._lightClusters = 0;

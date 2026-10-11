@@ -179,7 +179,7 @@ class ShadowRendererDirectional {
 
             // cull shadow casters
             shadowCam.updateFrustum();
-            this.shadowRenderer.cullShadowCasters(comp, light, lightRenderData.visibleCasters, shadowCam, casters);
+            this.shadowRenderer.cullShadowCasters(comp, light, lightRenderData.visibleCasters, shadowCam, casters, camera);
 
             const cascadeFlag = 1 << cascade;
             const visibleCasters = lightRenderData.visibleCasters;

@@ -94,8 +94,10 @@ class Culler {
      * @param {Camera} camera - The camera used for culling.
      * @param {MeshInstance[]} drawCalls - Draw calls to cull.
      * @param {CulledInstances} culledInstances - Stores culled instances.
+     * @param {number} [maxDrawDistance] - The draw distance of the mesh instances which have none of
+     * their own, see {@link Layer#maxDrawDistance}. Defaults to 0, which is off.
      */
-    cullMeshInstances(camera, drawCalls, culledInstances) {
+    cullMeshInstances(camera, drawCalls, culledInstances, maxDrawDistance = 0) {
         // #if _PROFILER
         const cullTime = now();
         // #endif
@@ -108,9 +110,22 @@ class Culler {
         const doCull = camera.frustumCulling;
         const count = drawCalls.length;
 
+        const cameraPosition = camera.node.getPosition();
+        const cx = cameraPosition.x;
+        const cy = cameraPosition.y;
+        const cz = cameraPosition.z;
+        let distanceCulled = 0;
+
         for (let i = 0; i < count; i++) {
             const drawCall = drawCalls[i];
             if (drawCall.visible) {
+
+                // distance first, as it is cheaper than the frustum test and skips it
+                const distance = drawCall.maxDrawDistance || maxDrawDistance;
+                if (distance > 0 && doCull && drawCall.cull && drawCall._isBeyondDistance(distance, cx, cy, cz)) {
+                    distanceCulled++;
+                    continue;
+                }
 
                 const visible = !doCull || !drawCall.cull || drawCall._isVisible(camera);
                 if (visible) {
@@ -131,6 +146,8 @@ class Culler {
                 }
             }
         }
+
+        this.renderer._distanceCulled += distanceCulled;
 
         // #if _PROFILER
         this.renderer._cullTime += now() - cullTime;
@@ -473,7 +490,7 @@ class Culler {
             camera.updateFrustum();
 
             for (const layer of camera.cullLayers) {
-                this.cullMeshInstances(camera, layer.meshInstances, layer.getCulledInstances(camera));
+                this.cullMeshInstances(camera, layer.meshInstances, layer.getCulledInstances(camera), layer.maxDrawDistance);
             }
 
             scene?.fire(EVENT_POSTCULL, cameraComponent);

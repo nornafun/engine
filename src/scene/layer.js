@@ -196,6 +196,15 @@ class Layer {
      */
     onDisable;
 
+    /**
+     * The distance in world units from a camera beyond which the mesh instances of the layer that
+     * do not set their own {@link MeshInstance#maxDrawDistance} are culled. 0 turns it off.
+     * Defaults to 0.
+     *
+     * @type {number}
+     */
+    maxDrawDistance = 0;
+
     // --- Mesh instances & shadow casters ---
 
     /**

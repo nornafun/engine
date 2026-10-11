@@ -642,7 +642,7 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
         this.supportsIndirectDraw = true;
 
         // the vertex shaders read the per mesh instance data from a storage buffer
-        this.supportsMeshInstanceStorage = (limits.maxStorageBuffersInVertexStage ?? limits.maxStorageBuffersPerShaderStage) > 0;
+        this.supportsMeshInstanceStorage = this.initOptions.meshInstanceStorage && (limits.maxStorageBuffersInVertexStage ?? limits.maxStorageBuffersPerShaderStage) > 0;
         this.textureFloatRenderable = true;
         this.textureHalfFloatRenderable = true;
         // ImageBitmap decoding is used for texture loading when the host provides it (browsers and

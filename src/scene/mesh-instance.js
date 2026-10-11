@@ -346,6 +346,19 @@ class MeshInstance {
     cull = true;
 
     /**
+     * The distance in world units from a camera beyond which the mesh instance is culled, measured
+     * from the camera to the nearest point of the bounding sphere of its {@link aabb}. A hard cut,
+     * tested before the frustum. 0 uses the {@link Layer#maxDrawDistance} of the layer being
+     * culled, which is off by default; set Infinity to opt out of a layer's distance. Not applied
+     * when {@link cull} is false, or when the camera's frustum culling is disabled. Shadow casters
+     * are culled by their distance from the camera of the directional light's view, not from the
+     * shadow camera. Does not change the shader variants or the light hash. Defaults to 0.
+     *
+     * @type {number}
+     */
+    maxDrawDistance = 0;
+
+    /**
      * Determines the rendering order of mesh instances. Only used when mesh instances are added to
      * a {@link Layer} with {@link Layer#opaqueSortMode} or {@link Layer#transparentSortMode}
      * (depending on the material) set to {@link SORTMODE_MANUAL}.
@@ -1371,6 +1384,30 @@ class MeshInstance {
         }
 
         return false;
+    }
+
+    /**
+     * Returns true when the bounding sphere of the mesh instance is farther than a distance from
+     * a point.
+     *
+     * @param {number} maxDistance - The distance, greater than 0.
+     * @param {number} x - The x coordinate of the point.
+     * @param {number} y - The y coordinate of the point.
+     * @param {number} z - The z coordinate of the point.
+     * @returns {boolean} True if the whole bounding sphere is beyond the distance.
+     * @ignore
+     */
+    _isBeyondDistance(maxDistance, x, y, z) {
+
+        // note that reading aabb evaluates it
+        const { center, halfExtents } = this.aabb;
+        const dx = center.x - x;
+        const dy = center.y - y;
+        const dz = center.z - z;
+
+        // the squared distance to the center against the squared distance plus the radius
+        const reach = maxDistance + Math.sqrt(halfExtents.x * halfExtents.x + halfExtents.y * halfExtents.y + halfExtents.z * halfExtents.z);
+        return dx * dx + dy * dy + dz * dz > reach * reach;
     }
 
     updateKey() {
