@@ -381,7 +381,6 @@ class Renderer {
         this._distanceCulled = 0;
         this._numDrawCallsCulled = 0;
         this._camerasRendered = 0;
-        this._lightClusters = 0;
         this._gsplatCount = 0;
 
         // Uniforms

@@ -8,6 +8,42 @@ import { UMD_TARGETS, createAppFrom } from './helpers.mjs';
 
 describe('build / AppStats', function () {
     for (const target of UMD_TARGETS) {
+        it(`reports the plain frame counters in ${target.name}`, function () {
+            const dom = new JSDOM('<!doctype html><body></body>', {
+                url: 'http://localhost:3210',
+                runScripts: 'outside-only'
+            });
+            let app;
+            try {
+                vm.runInContext(readFileSync(target.path, 'utf8'), dom.getInternalVMContext());
+                app = createAppFrom(dom.window.pc, dom.window.document);
+
+                // incremented by the culler, the renderer and the cluster allocator in every build,
+                // and published by updateBasic, which unlike updateDetailed runs in every build
+                app.renderer._distanceCulled = 7;
+                app.renderer._storageSlotsCopied = 5;
+                app.renderer.worldClustersAllocator.uploads = 3;
+                app.stats.updateBasic(1000, 0.016, 16, app.renderer, app.graphicsDevice);
+
+                const frame = app.stats.frame;
+                expect(frame.distanceCulled).to.equal(7);
+                expect(frame.storageSlotCopies).to.equal(5);
+                expect(frame.clusterUploads).to.equal(3);
+                expect(frame.lightClusters).to.equal(0);
+
+                // reset for the next frame
+                app.stats.updateBasic(1016, 0.016, 16, app.renderer, app.graphicsDevice);
+                expect(frame.distanceCulled).to.equal(0);
+                expect(frame.storageSlotCopies).to.equal(0);
+                expect(frame.clusterUploads).to.equal(0);
+            } finally {
+                app?.destroy();
+                dom.window.close();
+            }
+        });
+    }
+
+    for (const target of UMD_TARGETS) {
         it(`measures CPU phases in ${target.name}`, function () {
             const dom = new JSDOM('<!doctype html><body></body>', {
                 url: 'http://localhost:3210',

@@ -140,8 +140,7 @@ describe('Max draw distance', function () {
         far.maxDrawDistance = 10;
         app.render();
         app.stats.frame.distanceCulled = -1;
-        app.stats.update?.(0);
-        app.stats.updateDetailed(app.renderer, app.graphicsDevice);
+        app.stats.updateBasic(1000, 0.016, 16, app.renderer, app.graphicsDevice);
         expect(app.stats.frame.distanceCulled).to.equal(1);
         expect(app.renderer._distanceCulled).to.equal(0);
     });

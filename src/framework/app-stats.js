@@ -417,6 +417,16 @@ class AppStats {
 
         stats.gsplats = renderer._gsplatCount;
         stats.gsplatBufferCopy = renderer._gsplatBufferCopy ?? 0;
+
+        // plain counters, kept in every build as they cost an increment, unlike the timings
+        const allocator = renderer.worldClustersAllocator;
+        stats.storageSlotCopies = renderer._storageSlotsCopied;
+        stats.distanceCulled = renderer._distanceCulled;
+        stats.clusterUploads = allocator.uploads;
+        stats.lightClusters = allocator.count;
+        renderer._storageSlotsCopied = 0;
+        renderer._distanceCulled = 0;
+        allocator.uploads = 0;
     }
 
     /**
@@ -435,9 +445,6 @@ class AppStats {
         stats.materials = renderer._materialSwitches;
         stats.shaders = device._shaderSwitchesPerFrame;
         stats.shadowMapUpdates = renderer._shadowMapUpdates;
-        stats.storageSlotCopies = renderer._storageSlotsCopied;
-        stats.distanceCulled = renderer._distanceCulled;
-        stats.clusterUploads = renderer.worldClustersAllocator.uploads;
         stats.shadowMapTime = renderer._shadowMapTime;
         stats.depthMapTime = renderer._depthMapTime;
         stats.forwardTime = renderer._forwardTime;
@@ -449,14 +456,10 @@ class AppStats {
         stats.sortTime = renderer._sortTime;
         stats.skinTime = renderer._skinTime;
         stats.morphTime = renderer._morphTime;
-        stats.lightClusters = renderer._lightClusters;
         stats.lightClustersTime = renderer._lightClustersTime;
         renderer._camerasRendered = 0;
         renderer._materialSwitches = 0;
         renderer._shadowMapUpdates = 0;
-        renderer._storageSlotsCopied = 0;
-        renderer._distanceCulled = 0;
-        renderer.worldClustersAllocator.uploads = 0;
         device._shaderSwitchesPerFrame = 0;
         renderer._cullTime = 0;
         renderer._layerCompositionUpdateTime = 0;

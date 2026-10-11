@@ -126,7 +126,7 @@ describe('WorldClusters texture uploads', function () {
         const stats = app.stats;
         const frameUploads = () => {
             app.render();
-            stats.updateDetailed(app.renderer, app.graphicsDevice);
+            stats.updateBasic(1000, 0.016, 16, app.renderer, app.graphicsDevice);
             return stats.frame.clusterUploads;
         };
 

@@ -62,7 +62,6 @@ class FramePassUpdateClustered extends FramePass {
 
         // #if _PROFILER
         renderer._lightClustersTime += now() - startTime;
-        renderer._lightClusters = renderer.worldClustersAllocator.count;
         // #endif
     }
 }
