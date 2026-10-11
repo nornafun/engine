@@ -1205,14 +1205,17 @@ class Renderer {
      * Returns the slot of a mesh instance in the mesh instance storage of the device, for a draw
      * with a shader reading it, which passes the slot as the first instance of the draw, see
      * {@link Shader#usesMeshInstanceStorage}. The slot is allocated on the first such draw, and its
-     * matrices are written when the transform of the node changed since they were last written, or
-     * when the mesh instance was given a different node. When the allocation grows the storage, the
-     * view bind group of the shader, which holds the storage, is updated and bound again.
+     * matrices are written when the world matrix of the node differs from the one in the slot. The
+     * matrix is compared on every draw, rather than a transform version of the node: the per draw
+     * uniform buffer path reads the world matrix of the node at each draw, so a matrix written to it
+     * without marking the node dirty, as an app posing a node between passes may do, is drawn
+     * either way. When the allocation grows the storage, the view bind group of the shader, which
+     * holds the storage, is updated and bound again.
      *
      * All draws recorded before a submit read the data of a slot as uploaded by it. A node posed
      * differently by two passes of a frame, for example by the callbacks of two cameras, therefore
-     * moves to a new slot when its transform changes after its slot was written in the frame, and
-     * the draws recorded earlier keep the old slot, which is reused once the frame is submitted.
+     * moves to a new slot when its matrix changes after its slot was written in the frame, and the
+     * draws recorded earlier keep the old slot, which is reused once the frame is submitted.
      *
      * @param {MeshInstance} meshInstance - The mesh instance being drawn.
      * @param {Shader} shader - The shader of the draw, set on the device.
@@ -1221,31 +1224,27 @@ class Renderer {
     updateStorageSlot(meshInstance, shader) {
 
         const meshInstanceStorage = this.device.meshInstanceStorage;
-        let slot = meshInstance.storageSlot;
-        let allocated = slot < 0;
-
-        // a node marked dirty after the transforms were updated this frame is written again the next
-        // frame, once its transform is updated
         const node = meshInstance.node;
-        const version = node._dirtyWorld ? -1 : node._aabbVer;
-        let upToDate = false;
-        if (!allocated && meshInstance.storageSlotVersion !== node._aabbVer && meshInstanceStorage.isWritten(slot)) {
+        const world = node.worldTransform.data;
 
-            // the transform changed after the slot was written for the draws recorded already, which
-            // would all draw it posed as last. A version marked dirty without a change is not one.
-            if (meshInstanceStorage.holdsModel(slot, node.worldTransform.data)) {
-                upToDate = true;
-            } else {
+        let slot = meshInstance.storageSlot;
+        if (slot >= 0 && meshInstanceStorage.holdsModel(slot, world)) {
+            return slot;
+        }
+
+        // the matrix changed after the slot was written for the draws recorded already, which would
+        // all draw it posed as last
+        if (slot >= 0) {
+            if (meshInstanceStorage.isWritten(slot)) {
                 meshInstanceStorage.free(slot);
                 this._storageSlotsCopied++;
-                allocated = true;
+                slot = -1;
             }
         }
 
-        if (allocated) {
+        if (slot < 0) {
             slot = meshInstanceStorage.allocate();
             meshInstance.storageSlot = slot;
-            meshInstance.storageSlotVersion = -1;
 
             // the storage grew into a new buffer
             if (meshInstanceStorage.version !== this._meshInstanceStorageVersion) {
@@ -1255,13 +1254,7 @@ class Renderer {
             }
         }
 
-        if (meshInstance.storageSlotVersion !== node._aabbVer) {
-            meshInstance.storageSlotVersion = version;
-            if (!upToDate) {
-                meshInstanceStorage.write(slot, node.worldTransform.data, node.normalMatrix.data);
-            }
-        }
-
+        meshInstanceStorage.write(slot, world, node.normalMatrix.data);
         return slot;
     }
 

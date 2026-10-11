@@ -236,20 +236,55 @@ describe('Mesh instance storage', function () {
             expect(storage.count).to.be.at.most(count + 2);
         });
 
+        it('draws its own matrix in each pass when the world matrix is written without dirtying the node', function () {
+            const world = box.getWorldTransform();
+            const version = box._aabbVer;
+            app.scene.on('prerender', () => {
+                world.data[12] = 10 + posings++;
+            });
+            app.render();
+
+            const xs = new Set(draws.map(draw => draw.x));
+            expect(xs.size).to.be.above(1);
+            expect(new Set(draws.map(draw => draw.slot)).size).to.equal(xs.size);
+            for (const draw of draws) {
+                expect(slotX(draw.slot), `slot ${draw.slot}`).to.be.closeTo(draw.x, 1e-5);
+            }
+            expect(box._aabbVer).to.equal(version);
+            expect(app.renderer._storageSlotsCopied).to.equal(xs.size - 1);
+        });
+
+        it('draws a world matrix written without dirtying the node in the next frame', function () {
+            const world = box.getWorldTransform();
+            app.render();
+            const slot = meshInstance.storageSlot;
+            expect(slotX(slot)).to.be.closeTo(world.data[12], 1e-5);
+
+            world.data[12] = 123;
+            draws.length = 0;
+            app.render();
+            expect(draws.length).to.be.above(0);
+            expect(slotX(draws[draws.length - 1].slot)).to.be.closeTo(123, 1e-5);
+        });
+
         it('copies no slot when the node is not posed again, or moves between frames only', function () {
             app.render();
             const slot = meshInstance.storageSlot;
             expect(app.renderer._storageSlotsCopied).to.equal(0);
             expect(new Set(draws.map(draw => draw.slot))).to.deep.equal(new Set([slot]));
 
-            // a version marked dirty without a change of the transform does not copy either
+            // moved between the frames, which writes the slot in place
             box.setPosition(1, 2, 3);
-            app.render();
-            meshInstance.storageSlotVersion = -1;
             app.render();
             expect(app.renderer._storageSlotsCopied).to.equal(0);
             expect(meshInstance.storageSlot).to.equal(slot);
             expect(slotX(slot)).to.be.closeTo(1, 1e-5);
+
+            // marked dirty without a change of the matrix
+            box.setPosition(1, 2, 3);
+            app.render();
+            expect(app.renderer._storageSlotsCopied).to.equal(0);
+            expect(meshInstance.storageSlot).to.equal(slot);
         });
     });
 

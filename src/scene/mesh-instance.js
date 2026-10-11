@@ -603,15 +603,6 @@ class MeshInstance {
     storageSlot = -1;
 
     /**
-     * The transform version of the node the slot was last written for, see
-     * {@link Renderer#updateStorageSlot}.
-     *
-     * @type {number}
-     * @ignore
-     */
-    storageSlotVersion = -1;
-
-    /**
      * @type {BoundingBox|null}
      * @private
      */
@@ -738,10 +729,9 @@ class MeshInstance {
         if (node !== this._node) {
             this._node = node;
 
-            // the transform versions cached for the previous node do not apply to this one, whose
+            // the transform version cached for the previous node does not apply to this one, whose
             // version counter can hold the same value
             this._aabbVer = -1;
-            this.storageSlotVersion = -1;
         }
     }
 

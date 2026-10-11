@@ -57,20 +57,7 @@ describe('MeshInstance#node', function () {
         const a = nodeAt(0);
         const meshInstance = new MeshInstance(mesh, new ShaderMaterial(), a);
         meshInstance.aabb;
-        meshInstance.storageSlotVersion = a._aabbVer;
-
         meshInstance.node = a;
         expect(meshInstance._aabbVer).to.equal(a._aabbVer);
-        expect(meshInstance.storageSlotVersion).to.equal(a._aabbVer);
-    });
-
-    it('invalidates the storage slot data for a new node', function () {
-        const a = nodeAt(0);
-        const b = nodeAt(10);
-        const meshInstance = new MeshInstance(mesh, new ShaderMaterial(), a);
-        meshInstance.storageSlotVersion = a._aabbVer;
-
-        meshInstance.node = b;
-        expect(meshInstance.storageSlotVersion).to.equal(-1);
     });
 });
