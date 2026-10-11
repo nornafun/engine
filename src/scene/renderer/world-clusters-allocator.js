@@ -54,6 +54,14 @@ class WorldClustersAllocator {
     _requestedSteps = [];
 
     /**
+     * The number of cluster textures uploaded since the counter was last reset by the application
+     * statistics, the textures whose data did not change since the last upload excluded.
+     *
+     * @type {number}
+     */
+    uploads = 0;
+
+    /**
      * Create a new instance.
      *
      * @param {GraphicsDevice} graphicsDevice - The graphics device.
@@ -196,6 +204,7 @@ class WorldClustersAllocator {
         // update all unique clusters
         this._clusters.forEach((step) => {
             step.lightClusters.update(step.layer.clusteredLightsSet, lighting);
+            this.uploads += step.lightClusters.uploads;
         });
     }
 }

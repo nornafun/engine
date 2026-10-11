@@ -102,6 +102,7 @@ class AppStats {
             shadowMapUpdates: 0,
             storageSlotCopies: 0,
             distanceCulled: 0,
+            clusterUploads: 0,
             shadowMapTime: 0,
             depthMapTime: 0, // deprecated
             forwardTime: 0,
@@ -436,6 +437,7 @@ class AppStats {
         stats.shadowMapUpdates = renderer._shadowMapUpdates;
         stats.storageSlotCopies = renderer._storageSlotsCopied;
         stats.distanceCulled = renderer._distanceCulled;
+        stats.clusterUploads = renderer.worldClustersAllocator.uploads;
         stats.shadowMapTime = renderer._shadowMapTime;
         stats.depthMapTime = renderer._depthMapTime;
         stats.forwardTime = renderer._forwardTime;
@@ -454,6 +456,7 @@ class AppStats {
         renderer._shadowMapUpdates = 0;
         renderer._storageSlotsCopied = 0;
         renderer._distanceCulled = 0;
+        renderer.worldClustersAllocator.uploads = 0;
         device._shaderSwitchesPerFrame = 0;
         renderer._cullTime = 0;
         renderer._layerCompositionUpdateTime = 0;

@@ -4,7 +4,7 @@ import { BoundingBox } from '../../core/shape/bounding-box.js';
 import { PIXELFORMAT_R16U, PIXELFORMAT_R8U } from '../../platform/graphics/constants.js';
 import { TextureUtils } from '../../platform/graphics/texture-utils.js';
 import { LIGHTTYPE_DIRECTIONAL, LIGHTTYPE_SPOT, MASK_AFFECT_DYNAMIC, MASK_AFFECT_LIGHTMAPPED } from '../constants.js';
-import { LightsBuffer } from './lights-buffer.js';
+import { LightsBuffer, copyIfChanged } from './lights-buffer.js';
 import { Debug } from '../../core/debug.js';
 
 /**
@@ -36,6 +36,22 @@ class ClusterLight {
 class WorldClusters {
     /** @type {Texture} */
     clusterTexture;
+
+    /**
+     * The data of the cluster texture as last uploaded, or null before the first upload.
+     *
+     * @type {Uint8ClampedArray|Uint16Array|null}
+     * @private
+     */
+    _uploadedClusters = null;
+
+    /**
+     * The number of textures, of the two the cluster stores its data in, uploaded by the last
+     * update.
+     *
+     * @type {number}
+     */
+    uploads = 0;
 
     constructor(device) {
         this.device = device;
@@ -218,6 +234,8 @@ class WorldClusters {
             this.clusters = use16BitIndex ? new Uint16Array(totalPixels) : new Uint8ClampedArray(totalPixels);
             this.counts = new Int32Array(numCells);
 
+            this._uploadedClusters = null;
+
             this.releaseClusterTexture();
             this.clusterTexture = this.lightsBuffer.createTexture(this.device, width, height,
                 use16BitIndex ? PIXELFORMAT_R16U : PIXELFORMAT_R8U, 'ClusterTexture');
@@ -226,10 +244,26 @@ class WorldClusters {
 
     uploadTextures() {
 
-        this.clusterTexture.lock().set(this.clusters);
-        this.clusterTexture.unlock();
+        // skip the upload of a texture that did not change since the last frame
+        let uploads = 0;
+        if (this._uploadedClusters) {
+            if (copyIfChanged(this.clusters, this._uploadedClusters)) {
+                this.clusterTexture.lock().set(this.clusters);
+                this.clusterTexture.unlock();
+                uploads++;
+            }
+        } else {
+            this._uploadedClusters = this.clusters.slice();
+            this.clusterTexture.lock().set(this.clusters);
+            this.clusterTexture.unlock();
+            uploads++;
+        }
 
-        this.lightsBuffer.uploadTextures();
+        if (this.lightsBuffer.uploadTextures()) {
+            uploads++;
+        }
+
+        this.uploads = uploads;
     }
 
     updateUniforms() {

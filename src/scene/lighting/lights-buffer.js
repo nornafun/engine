@@ -53,6 +53,29 @@ const lightBufferDefines = `\n
     ${buildShaderDefines(enums, '')}
 `;
 
+/**
+ * Copies the source into the target when they differ, so that a texture is uploaded again only
+ * when its data changed.
+ *
+ * @param {ArrayBufferView & ArrayLike<number>} source - The new data.
+ * @param {ArrayBufferView & ArrayLike<number>} target - The copy of the data last uploaded, with the
+ * type and the length of the source.
+ * @returns {boolean} True if the data differed, and the target now holds it.
+ * @ignore
+ */
+const copyIfChanged = (source, target) => {
+    const length = source.length;
+    let i = 0;
+    while (i < length && source[i] === target[i]) {
+        i++;
+    }
+    if (i === length) {
+        return false;
+    }
+    target.set(source);
+    return true;
+};
+
 // A class used by clustered lighting, responsible for encoding light properties into textures for the use on the GPU
 class LightsBuffer {
     areaLightsEnabled = false;
@@ -66,6 +89,14 @@ class LightsBuffer {
 
     /** @type {number} */
     _maxLights = 0;
+
+    /**
+     * The data of the lights texture as last uploaded, or null before the first upload.
+     *
+     * @type {Float32Array|null}
+     * @private
+     */
+    _uploadedFloat = null;
 
     constructor(device) {
 
@@ -107,6 +138,8 @@ class LightsBuffer {
             const pixelsPerLightFloat = TextureIndexFloat.COUNT;
             this.lightsFloat = new Float32Array(4 * pixelsPerLightFloat * value);
             this.lightsUint = new Uint32Array(this.lightsFloat.buffer);
+
+            this._uploadedFloat = null;
 
             this.lightsTexture?.destroy();
             this.lightsTexture = this.createTexture(this.device, pixelsPerLightFloat, value, PIXELFORMAT_RGBA32F, 'LightsTexture');
@@ -152,10 +185,25 @@ class LightsBuffer {
         this.boundsDelta.copy(delta);
     }
 
+    /**
+     * Uploads the lights texture, unless its data is the same as the last upload.
+     *
+     * @returns {boolean} True if the texture was uploaded.
+     */
     uploadTextures() {
+
+        // the lights rarely change between frames, so skip the upload of the whole texture then
+        if (this._uploadedFloat) {
+            if (!copyIfChanged(this.lightsFloat, this._uploadedFloat)) {
+                return false;
+            }
+        } else {
+            this._uploadedFloat = this.lightsFloat.slice();
+        }
 
         this.lightsTexture.lock().set(this.lightsFloat);
         this.lightsTexture.unlock();
+        return true;
     }
 
     updateUniforms() {
@@ -282,4 +330,4 @@ class LightsBuffer {
     }
 }
 
-export { LightsBuffer };
+export { LightsBuffer, copyIfChanged };
