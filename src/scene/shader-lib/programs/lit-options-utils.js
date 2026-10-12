@@ -8,7 +8,13 @@ const LitOptionsUtils = {
         .sort()
         .map((key) => {
             if (key === 'shaderChunks') {
-                return options.shaderChunks?.key ?? '';
+                // the chunks themselves, without their API version, which only decides the warnings
+                // of the debug build, and keyed alike without an override or without chunks at all
+                const chunks = options.shaderChunks;
+                if (!chunks?.glsl || !chunks.wgsl) {
+                    return chunks?.key ?? '';
+                }
+                return chunks.glsl.size || chunks.wgsl.size ? `GLSL:${chunks.glsl.key}|WGSL:${chunks.wgsl.key}` : '';
             } else if (key === 'lights') {
                 return LitOptionsUtils.generateLightsKey(options);
             } else if (key === 'noShadow') {

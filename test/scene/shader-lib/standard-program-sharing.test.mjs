@@ -3,17 +3,23 @@ import { expect } from 'chai';
 import {
     BINDGROUP_MATERIAL, SEMANTIC_NORMAL, SEMANTIC_POSITION, SEMANTIC_TEXCOORD0, TYPE_FLOAT32
 } from '../../../src/platform/graphics/constants.js';
+import { Shader } from '../../../src/platform/graphics/shader.js';
 import { Texture } from '../../../src/platform/graphics/texture.js';
 import { VertexFormat } from '../../../src/platform/graphics/vertex-format.js';
 import { CameraShaderParams } from '../../../src/scene/camera-shader-params.js';
 import {
-    LIGHTTYPE_DIRECTIONAL, LIGHTTYPE_OMNI, MASK_AFFECT_DYNAMIC, SHADER_FORWARD, SHADER_PREPASS,
-    SHADERDEF_AFFECT_DYNAMIC, SHADERDEF_NOSHADOW
+    LIGHTTYPE_DIRECTIONAL, LIGHTTYPE_OMNI, MASK_AFFECT_DYNAMIC, SHADER_FORWARD, SHADER_PICK, SHADER_PREPASS,
+    SHADERDEF_AFFECT_DYNAMIC, SHADERDEF_NOSHADOW, SHADOW_PCF3_32F
 } from '../../../src/scene/constants.js';
 import { Light } from '../../../src/scene/light.js';
 import { LightList } from '../../../src/scene/lighting/light-list.js';
 import { StandardMaterial } from '../../../src/scene/materials/standard-material.js';
+import { getProgramLibrary } from '../../../src/scene/shader-lib/get-program-library.js';
+import { reachableChunks } from '../../../src/scene/shader-lib/pass-shader-chunks.js';
 import { LitOptionsUtils } from '../../../src/scene/shader-lib/programs/lit-options-utils.js';
+import { standard } from '../../../src/scene/shader-lib/programs/standard.js';
+import { ShaderChunks } from '../../../src/scene/shader-lib/shader-chunks.js';
+import { ShaderPass } from '../../../src/scene/shader-pass.js';
 import { createApp } from '../../app.mjs';
 import { jsdomSetup, jsdomTeardown } from '../../jsdom.mjs';
 
@@ -64,6 +70,13 @@ describe('StandardMaterial program sharing', function () {
             ...params
         });
     };
+
+    // the shadow pass of a directional light, allocated as the shadow renderer does
+    const shadowPass = () => ShaderPass.get(app.graphicsDevice).allocate(`ShadowPass_${LIGHTTYPE_DIRECTIONAL}_${SHADOW_PCF3_32F}`, {
+        isShadow: true,
+        lightType: LIGHTTYPE_DIRECTIONAL,
+        shadowType: SHADOW_PCF3_32F
+    }).index;
 
     const materialFormat = shader => shader.definition.processingOptions.uniformFormats[BINDGROUP_MATERIAL];
 
@@ -248,6 +261,166 @@ describe('StandardMaterial program sharing', function () {
             expect(splits({ lights: [omniCaster], clusteredLightingEnabled: true })).to.equal(false);
             expect(splits({ lights: [], clusteredLightingEnabled: true, clusteredLightingShadowsEnabled: true })).to.equal(true);
             expect(splits({ lights: [], clusteredLightingEnabled: false, clusteredLightingShadowsEnabled: true })).to.equal(false);
+        });
+
+    });
+
+    describe('shader chunks', function () {
+
+        // a chunk the depth passes include, and two only the forward pass includes
+        const transformVS = chunk => chunk.replace('vec4 getPosition() {', 'vec4 getPosition() {\n    float movedMarker = 1.0;');
+        const forwardChunks = {
+            diffusePS: 'uniform vec3 material_diffuse;\nvoid getAlbedo() { dAlbedo = material_diffuse; }\n',
+            ambientPS: 'void addAmbient(vec3 worldNormal) { dDiffuseLight += vec3(0.5); }\n'
+        };
+
+        const engineChunk = name => ShaderChunks.get(app.graphicsDevice).get(name);
+
+        /**
+         * @param {object} glsl - The GLSL chunks of the material.
+         * @param {string} [version] - The chunk API version.
+         * @returns {StandardMaterial} The material.
+         */
+        const create = (glsl = {}, version) => {
+            const material = new StandardMaterial();
+            for (const [name, code] of Object.entries(glsl)) {
+                material.getShaderChunks('glsl').set(name, code);
+            }
+            if (version !== undefined) {
+                material.shaderChunksVersion = version;
+            }
+            material.update();
+            return material;
+        };
+
+        /**
+         * Returns the shader the generator makes from every chunk of the material, as no chunk was
+         * left out: the variant is requested with the program library generating, next to it, the
+         * shader of the options it was asked for with the material's own chunks.
+         *
+         * @param {StandardMaterial} material - The material.
+         * @param {number} pass - The shader pass.
+         * @returns {{ shared: Shader, full: Shader }} The shader of the variant and the full one.
+         */
+        const withFullChunks = (material, pass) => {
+            const device = app.graphicsDevice;
+            const library = getProgramLibrary(device);
+            const getProgram = library.getProgram;
+            let full = null;
+            library.getProgram = function (name, options, processingOptions, userMaterialId) {
+                const filtered = options.litOptions.shaderChunks;
+                options.litOptions.shaderChunks = material.shaderChunks;
+                const definition = standard.createShaderDefinition(device, options);
+                options.litOptions.shaderChunks = filtered;
+                full = new Shader(device, { ...definition, name: 'full' });
+                return getProgram.call(this, name, options, processingOptions, userMaterialId);
+            };
+            try {
+                const shared = variant(material, pass);
+                return { shared, full };
+            } finally {
+                library.getProgram = getProgram;
+            }
+        };
+
+        const source = shader => [shader.definition.vshader, shader.definition.fshader];
+
+        it('shares the depth shaders of materials differing in the forward chunks alone', function () {
+            const moved = { transformVS: transformVS(engineChunk('transformVS')) };
+            const plain = create(moved);
+            const forward = create({ ...moved, ...forwardChunks }, '2.24');
+
+            for (const pass of [SHADER_PREPASS, shadowPass(), SHADER_PICK]) {
+                const { shared, full } = withFullChunks(forward, pass);
+
+                // generated from all its chunks, the shader is the one generated without the
+                // forward ones, so leaving them out of the key changes no source
+                expect(source(full)).to.deep.equal(source(shared));
+                expect(full.definition.attributes).to.deep.equal(shared.definition.attributes);
+                expect(variant(plain, pass)).to.equal(shared);
+                expect(shared.definition.vshader).to.include('movedMarker');
+            }
+
+            // the forward pass includes them
+            const forwardShader = variant(forward, SHADER_FORWARD);
+            expect(forwardShader).to.not.equal(variant(plain, SHADER_FORWARD));
+            expect(forwardShader.definition.fshader).to.include('vec3(0.5)');
+        });
+
+        it('splits the depth shaders of materials differing in a chunk the pass includes', function () {
+            const plain = create();
+            const moved = create({ transformVS: transformVS(engineChunk('transformVS')) });
+            const prepass = variant(moved, SHADER_PREPASS);
+            expect(prepass).to.not.equal(variant(plain, SHADER_PREPASS));
+            expect(prepass.definition.vshader).to.include('movedMarker');
+        });
+
+        it('keeps the chunks of a material writing a pass define', function () {
+            const plain = create();
+            const defining = create({ ...forwardChunks, litUserDeclarationPS: '#define FORWARD_PASS\n' });
+            expect(variant(defining, SHADER_PREPASS)).to.not.equal(variant(plain, SHADER_PREPASS));
+        });
+
+        it('shares the shaders of materials differing in the chunk API version alone', function () {
+            const none = create();
+            const versioned = create({}, '2.24');
+            for (const pass of [SHADER_FORWARD, SHADER_PREPASS]) {
+                expect(variant(versioned, pass)).to.equal(variant(none, pass));
+            }
+            const a = create(forwardChunks);
+            const b = create(forwardChunks, '2.24');
+            expect(variant(b, SHADER_FORWARD)).to.equal(variant(a, SHADER_FORWARD));
+        });
+
+        it('reaches the chunks of the branch the pass defines select', function () {
+            const chunkOf = name => engineChunk(name);
+            const prepass = reachableChunks(chunkOf, new Set(['PREPASS_PASS']));
+            const shadow = reachableChunks(chunkOf, new Set(['SHADOW_PASS']));
+            const forward = reachableChunks(chunkOf, new Set(['FORWARD_PASS']));
+
+            expect(prepass.has('litOtherMainPS')).to.equal(true);
+            expect(prepass.has('transformVS')).to.equal(true);
+            expect(prepass.has('stdFrontEndPS')).to.equal(true);
+            expect(prepass.has('litForwardMainPS')).to.equal(false);
+            expect(prepass.has('diffusePS')).to.equal(false);
+            expect(shadow.has('litShadowMainPS')).to.equal(true);
+            expect(shadow.has('litOtherMainPS')).to.equal(false);
+            expect(forward.has('litForwardMainPS')).to.equal(true);
+            expect(forward.has('diffusePS')).to.equal(true);
+            expect(forward.has('ambientPS')).to.equal(true);
+
+            // an unknown condition keeps both branches, and an unclosed block keeps every chunk
+            const custom = new Map([
+                ['litMainPS', '#ifdef PREPASS_PASS\n#include "a"\n#elif defined(OTHER)\n#include "b"\n#else\n#include "c"\n#endif\n#if defined(OTHER) || !defined(SHADOW_PASS)\n#include "d"\n#endif'],
+                ['litMainVS', '']
+            ]);
+            const reached = reachableChunks(name => custom.get(name) ?? '', new Set(['PREPASS_PASS']));
+            expect([...reached].filter(name => name.length === 1).sort()).to.deep.equal(['a', 'd']);
+            const shadowReached = reachableChunks(name => custom.get(name) ?? '', new Set(['SHADOW_PASS']));
+            expect([...shadowReached].filter(name => name.length === 1).sort()).to.deep.equal(['b', 'c', 'd']);
+            custom.set('litMainVS', '#ifdef PREPASS_PASS\n');
+            expect(reachableChunks(name => custom.get(name) ?? '', new Set(['PREPASS_PASS']))).to.equal(null);
+        });
+
+    });
+
+    describe('clustered lighting', function () {
+
+        it('shares the shadow shaders of a lit and an unlit material', function () {
+            app.destroy();
+            app = createApp();
+            expect(app.scene.clusteredLightingEnabled).to.equal(true);
+
+            const lit = new StandardMaterial();
+            lit.update();
+            const unlit = new StandardMaterial();
+            unlit.useLighting = false;
+            unlit.update();
+            const shadow = shadowPass();
+            expect(variant(lit, shadow)).to.equal(variant(unlit, shadow));
+
+            // the prepass of the lit material writes the normal the clustered lighting asks for
+            expect(variant(lit, SHADER_PREPASS)).to.not.equal(variant(unlit, SHADER_PREPASS));
         });
 
     });

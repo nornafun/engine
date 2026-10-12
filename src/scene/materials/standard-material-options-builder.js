@@ -52,9 +52,9 @@ class StandardMaterialOptionsBuilder {
     }
 
     // Minimal options for Depth and Shadow passes, and the outline pass
-    updateMinRef(options, scene, stdMat, objDefs, pass, lightList, vertexFormat, outlinePass = false) {
+    updateMinRef(options, scene, stdMat, objDefs, pass, lightList, vertexFormat, outlinePass = false, shadowPass = false) {
         this._updateSharedOptions(options, scene, stdMat, objDefs, pass);
-        this._updateMinOptions(options, stdMat, pass, outlinePass);
+        this._updateMinOptions(options, stdMat, pass, outlinePass, shadowPass);
         this._updateUVOptions(options, stdMat, objDefs, vertexFormat, true);
     }
 
@@ -196,7 +196,7 @@ class StandardMaterialOptionsBuilder {
         }
     }
 
-    _updateMinOptions(options, stdMat, pass, outlinePass) {
+    _updateMinOptions(options, stdMat, pass, outlinePass, shadowPass) {
 
         // pre-pass uses the same dither setting as forward pass, otherwise shadow dither
         const isPrepass = pass === SHADER_PREPASS;
@@ -216,10 +216,19 @@ class StandardMaterialOptionsBuilder {
         // the other minimal passes.
         if (outlinePass) {
             options.litOptions.blendType = BLEND_NONE;
+        }
+
+        // a shadow shader reads no lighting - it needs no normal, which the lighting otherwise asks
+        // for - so it does not depend on the clustered lighting, which a lit and an unlit material
+        // differ in. The outline pass skips the clustered lighting too.
+        if (outlinePass || shadowPass) {
             options.litOptions.clusteredLightingEnabled = false;
             options.litOptions.clusteredLightingCookiesEnabled = false;
             options.litOptions.clusteredLightingShadowsEnabled = false;
             options.litOptions.clusteredLightingAreaLightsEnabled = false;
+        }
+        if (shadowPass) {
+            options.litOptions.clusteredLightingShadowType = 0;
         }
     }
 

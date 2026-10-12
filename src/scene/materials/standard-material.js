@@ -24,6 +24,7 @@ import { _matTex2D, standard } from '../shader-lib/programs/standard.js';
 import { Material } from './material.js';
 import { MaterialProperty, convertColorToLinear, convertFloat } from './material-property.js';
 import { getMaterialLayout } from './material-uniform-buffer-layout.js';
+import { getPassShaderChunks } from '../shader-lib/pass-shader-chunks.js';
 import { getTextureDescriptors, getTextureIdentifiers, getTextureSharing } from './standard-material-textures.js';
 import { StandardMaterialMapTransforms, usesMapTransforms } from './standard-material-map-transforms.js';
 import { StandardMaterialOptionsBuilder } from './standard-material-options-builder.js';
@@ -1928,7 +1929,11 @@ class StandardMaterial extends Material {
         options.defines = ShaderUtils.getCoreDefines(this, params);
 
         if (minimalOptions) {
-            this.shaderOptBuilder.updateMinRef(options, scene, this, objDefs, pass, lightList, vertexFormat, outlinePass);
+            this.shaderOptBuilder.updateMinRef(options, scene, this, objDefs, pass, lightList, vertexFormat, outlinePass, shaderPassInfo.isShadow);
+
+            // the depth, shadow and picking shaders include none of the forward code, so they are
+            // generated and keyed without the chunks overriding it
+            options.litOptions.shaderChunks = getPassShaderChunks(device, options.litOptions.shaderChunks, shaderPassInfo, options.defines);
         } else {
             this.shaderOptBuilder.updateRef(options, scene, cameraShaderParams, this, objDefs, pass, lightList, vertexFormat);
         }
