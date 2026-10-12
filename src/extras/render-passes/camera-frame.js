@@ -1,17 +1,17 @@
 import { Debug } from '../../core/debug.js';
 import { math } from '../../core/math/math.js';
 import { PIXELFORMAT_111110F, PIXELFORMAT_RGBA16F, PIXELFORMAT_RGBA32F, PIXELFORMAT_RGBA8 } from '../../platform/graphics/constants.js';
-import { FRAMERESOURCE_DEPTH, FRAMERESOURCE_PREPASSDEPTH } from './constants.js';
-import { BloomEffect } from './effects/bloom-effect.js';
-import { CasEffect } from './effects/cas-effect.js';
-import { ColorEnhanceEffect } from './effects/color-enhance-effect.js';
-import { ColorLutEffect } from './effects/color-lut-effect.js';
-import { DofEffect } from './effects/dof-effect.js';
-import { FringingEffect } from './effects/fringing-effect.js';
-import { GradingEffect } from './effects/grading-effect.js';
-import { SsaoEffect } from './effects/ssao-effect.js';
-import { VignetteEffect } from './effects/vignette-effect.js';
-import { VolumetricFogEffect } from './effects/volumetric-fog-effect.js';
+import { FRAMERESOURCE_DEPTH, FRAMERESOURCE_PREPASSDEPTH, FRAMERESOURCE_SCENECOLORGRAB } from './constants.js';
+import { BloomEffect } from '../effects/bloom/bloom-effect.js';
+import { CasEffect } from '../effects/cas/cas-effect.js';
+import { ColorEnhanceEffect } from '../effects/color-enhance/color-enhance-effect.js';
+import { ColorLutEffect } from '../effects/color-lut/color-lut-effect.js';
+import { DofEffect } from '../effects/dof/dof-effect.js';
+import { FringingEffect } from '../effects/fringing/fringing-effect.js';
+import { GradingEffect } from '../effects/grading/grading-effect.js';
+import { SsaoEffect } from '../effects/ssao/ssao-effect.js';
+import { VignetteEffect } from '../effects/vignette/vignette-effect.js';
+import { VolumetricFogEffect } from '../effects/volumetric-fog/volumetric-fog-effect.js';
 import { CameraFrameOptions, FramePassCameraFrame } from './frame-pass-camera-frame.js';
 
 /**
@@ -548,7 +548,6 @@ class CameraFrame {
         const { options, rendering, taa } = this;
         options.stencil = rendering.stencil;
         options.samples = rendering.samples;
-        options.sceneColorMap = rendering.sceneColorMap;
         options.prepassEnabled = rendering.sceneDepthMap;
         options.taaEnabled = taa.enabled;
         options.formats = rendering.renderFormats.slice();
@@ -560,11 +559,12 @@ class CameraFrame {
         // the active registered effects owning passes, the resources they require and what else
         // their passes depend on - the frame passes are rebuilt when this changes. The effects are
         // identified by instance, so that replacing one with a new instance of the same id builds
-        // the passes of the new one. The scene depth is rendered for any active effect requiring
-        // it, those without passes included.
+        // the passes of the new one. The scene depth and the copy of the scene color are rendered
+        // for any active effect requiring them, those without passes included.
         let effectPasses = '';
         let depthRequired = false;
         let prepassDepthRequired = false;
+        let colorGrabRequired = false;
         const { effects } = this;
         for (let i = 0; i < effects.length; i++) {
             const effect = effects[i];
@@ -572,6 +572,7 @@ class CameraFrame {
                 const { requires } = effect;
                 depthRequired ||= requires.includes(FRAMERESOURCE_DEPTH);
                 prepassDepthRequired ||= requires.includes(FRAMERESOURCE_PREPASSDEPTH);
+                colorGrabRequired ||= requires.includes(FRAMERESOURCE_SCENECOLORGRAB);
                 if (effect._ownsPasses) {
                     effectPasses += `${effect._uid}:${requires}:${effect.buildKey()};`;
                 }
@@ -580,6 +581,7 @@ class CameraFrame {
         options.effectPasses = effectPasses;
         options.depthRequired = depthRequired;
         options.prepassDepthRequired = prepassDepthRequired;
+        options.sceneColorMap = rendering.sceneColorMap || colorGrabRequired;
     }
 
     /**
