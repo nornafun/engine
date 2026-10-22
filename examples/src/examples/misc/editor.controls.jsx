@@ -1,5 +1,6 @@
 import {
     BindingTwoWay,
+    BooleanInput,
     LabelGroup,
     Panel,
     SliderInput,
@@ -90,6 +91,20 @@ export function Controls({ observer }) {
                         precision={0}
                     />
                 </LabelGroup>
+                <LabelGroup text='Readout'>
+                    <BooleanInput
+                        type='toggle'
+                        binding={new BindingTwoWay()}
+                        link={{ observer, path: 'gizmo.readout' }}
+                    />
+                </LabelGroup>
+                <LabelGroup text='Bounding Box'>
+                    <BooleanInput
+                        type='toggle'
+                        binding={new BindingTwoWay()}
+                        link={{ observer, path: 'gizmo.bounds' }}
+                    />
+                </LabelGroup>
             </Panel>
             <Panel headerText='Camera'>
                 <LabelGroup text='Projection'>
@@ -115,17 +130,6 @@ export function Controls({ observer }) {
                 )}
             </Panel>
             <Panel headerText='Grid'>
-                <LabelGroup text='Resolution'>
-                    <SelectInput
-                        options={[
-                            { v: 3, t: 'High' },
-                            { v: 2, t: 'Medium' },
-                            { v: 1, t: 'Low' }
-                        ]}
-                        binding={new BindingTwoWay()}
-                        link={{ observer, path: 'grid.resolution' }}
-                    />
-                </LabelGroup>
                 <LabelGroup text='Color X'>
                     <ColorPicker
                         binding={new BindingTwoWay()}

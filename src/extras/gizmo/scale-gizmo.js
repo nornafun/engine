@@ -173,18 +173,28 @@ class ScaleGizmo extends TransformGizmo {
 
             // hide shapes that are not selected
             this._drag(true);
+
+            this.fire(TransformGizmo.EVENT_TRANSFORMREADOUT, this._selectedAxis, this._selectedIsPlane, Vec3.ONE);
         });
 
         this.on(TransformGizmo.EVENT_TRANSFORMMOVE, (point) => {
             // calculate scale delta and update node scales
-            const scaleDelta = delta.copy(point).sub(this._selectionStartPoint);
+            const scaleDelta = delta.copy(point).sub(this._selectionStartPoint).mulScalar(1 / this._scale);
             if (this.snap) {
                 scaleDelta.mulScalar(1 / this.snapIncrement);
                 scaleDelta.round();
                 scaleDelta.mulScalar(this.snapIncrement);
             }
-            scaleDelta.mulScalar(1 / this._scale);
             this._setNodeScales(scaleDelta.add(Vec3.ONE));
+
+            this.fire(TransformGizmo.EVENT_TRANSFORMREADOUT, this._selectedAxis, this._selectedIsPlane, scaleDelta);
+        });
+
+        this.on(TransformGizmo.EVENT_TRANSFORMREADOUT, (_axis, _isPlane, value) => {
+            if (!this._readout) {
+                return;
+            }
+            this._showReadout(this._readoutAxes(value, true));
         });
 
         this.on(TransformGizmo.EVENT_TRANSFORMEND, () => {
@@ -578,7 +588,7 @@ class ScaleGizmo extends TransformGizmo {
             // project to diagonal line
             v1.set(1, 1, 1);
             v1[axis] = 0;
-            point.copy(v1.mulScalar(v1.dot(point)));
+            point.copy(v1.mulScalar(v1.dot(point) / v1.lengthSq()));
             point[axis] = 0;
         }
 

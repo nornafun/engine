@@ -8,6 +8,7 @@ import { PROJECTION_PERSPECTIVE } from '../../scene/constants.js';
 import { ArcShape } from './shape/arc-shape.js';
 import { TransformGizmo } from './transform-gizmo.js';
 import { MeshLine } from './mesh-line.js';
+import { MeshSector } from './mesh-sector.js';
 import { SphereShape } from './shape/sphere-shape.js';
 
 /**
@@ -28,6 +29,7 @@ const color = new Color();
 
 // constants
 const RING_FACING_EPSILON = 1e-4;
+const SECTOR_ALPHA = 0.4;
 const UPDATE_EPSILON = 1e-6;
 const AXES = /** @type {('x' | 'y' | 'z')[]} */ (['x', 'y', 'z']);
 
@@ -180,6 +182,28 @@ class RotateGizmo extends TransformGizmo {
     _guideAngleLines;
 
     /**
+     * Internal sectors filling the swept angle and, once past a full turn, the rest of the circle.
+     *
+     * @type {MeshSector[]}
+     * @private
+     */
+    _guideAngleSectors;
+
+    /**
+     * Internal axis the angle guide sweeps around, in world space.
+     *
+     * @private
+     */
+    _guideAngleAxis = new Vec3();
+
+    /**
+     * Internal angle swept by the angle guide, in degrees.
+     *
+     * @private
+     */
+    _guideAngle = 0;
+
+    /**
      * Internal copy of facing direction to avoid unnecessary updates.
      *
      * @private
@@ -233,6 +257,15 @@ class RotateGizmo extends TransformGizmo {
             line.entity.enabled = false;
         });
 
+        this._guideAngleSectors = [
+            new MeshSector(this._app, this._layer),
+            new MeshSector(this._app, this._layer)
+        ];
+        this._guideAngleSectors.forEach((sector) => {
+            this._app.root.addChild(sector.entity);
+            sector.entity.enabled = false;
+        });
+
         this.on(TransformGizmo.EVENT_TRANSFORMSTART, (point, x, y) => {
             // store start screen point
             this._screenPos.set(x, y);
@@ -252,6 +285,8 @@ class RotateGizmo extends TransformGizmo {
 
             // angle guide lines
             this._angleGuide(true);
+
+            this.fire(TransformGizmo.EVENT_TRANSFORMREADOUT, this._selectedAxis, this._selectedIsPlane, 0);
         });
 
         this.on(TransformGizmo.EVENT_TRANSFORMMOVE, (point, x, y) => {
@@ -270,6 +305,8 @@ class RotateGizmo extends TransformGizmo {
                 const angleAxis = v1.cross(facingDir, delta).normalize();
                 const angleDelta = this._screenPos.distance(this._screenStartPos);
                 this._setNodeRotations(axis, angleAxis, angleDelta);
+
+                this.fire(TransformGizmo.EVENT_TRANSFORMREADOUT, this._selectedAxis, this._selectedIsPlane, angleDelta);
             } else {
                 // calculate angle axis and delta and update node rotations
                 let angleDelta = this._calculateArcAngle(point, x, y) - this._selectionStartAngle;
@@ -283,7 +320,16 @@ class RotateGizmo extends TransformGizmo {
                 // update guide points and show angle guide
                 this._updateGuidePoints(angleDelta);
                 this._angleGuide(true);
+
+                this.fire(TransformGizmo.EVENT_TRANSFORMREADOUT, this._selectedAxis, this._selectedIsPlane, angleDelta);
             }
+        });
+
+        this.on(TransformGizmo.EVENT_TRANSFORMREADOUT, (_axis, _isPlane, angle) => {
+            if (!this._readout) {
+                return;
+            }
+            this._showAngleReadout(angle);
         });
 
         this.on(TransformGizmo.EVENT_TRANSFORMEND, () => {
@@ -431,6 +477,33 @@ class RotateGizmo extends TransformGizmo {
     }
 
     /**
+     * Sets the gizmo render layer.
+     *
+     * @type {Layer}
+     */
+    set layer(layer) {
+        super.layer = layer;
+
+        // the guide lines are not children of the gizmo root
+        const ids = [layer.id];
+        for (let i = 0; i < this._guideAngleLines.length; i++) {
+            const { render } = this._guideAngleLines[i].entity;
+            if (render) {
+                render.layers = ids;
+            }
+        }
+    }
+
+    /**
+     * Gets the gizmo render layer.
+     *
+     * @type {Layer}
+     */
+    get layer() {
+        return super.layer;
+    }
+
+    /**
      * @type {boolean}
      * @deprecated Use {@link rotationMode} instead.
      * @ignore
@@ -459,6 +532,43 @@ class RotateGizmo extends TransformGizmo {
         this._shapes.z[prop] = value;
     }
 
+    /**
+     * Shows the angle in the readout, labelled with the axis unless rotating freely or facing. It
+     * sits below the outline of a sphere around all the rings, since the ring shapes turn while
+     * dragging.
+     *
+     * @param {number} angle - The angle in degrees.
+     * @private
+     */
+    _showAngleReadout(angle) {
+        const axis = this._selectedAxis;
+        const label = axis === 'f' || axis === 'xyz' ? '' : `${this._readoutLabel(axis)} `;
+        const html = `${label}${this._readoutDelta(angle, 1)}°`;
+        const radius = this._scale *
+            Math.max(this.xyzRingRadius + this.xyzTubeRadius, this.faceRingRadius + this.faceTubeRadius);
+
+        const center = this.root.getPosition();
+        const x = this._camera.worldToScreen(center, v3).x;
+
+        // the lowest point of the outline: in perspective its tangent from the camera, which
+        // reaches further than the radius straight down once the sphere is close
+        const up = this._camera.entity.up;
+        const eye = this._camera.entity.getPosition();
+        const view = v1.sub2(center, eye);
+        const dist = view.length();
+        if (this._camera.projection !== PROJECTION_PERSPECTIVE || dist <= radius) {
+            v3.copy(up).mulScalar(-radius).add(center);
+            this._readout?.show(html, x, this._camera.worldToScreen(v3, point).y);
+            return;
+        }
+        view.mulScalar(1 / dist);
+        const down = v2.copy(view).mulScalar(up.dot(view)).sub(up).normalize();
+        const sin = radius / dist;
+        const cos = Math.sqrt(1 - sin * sin);
+        v3.copy(view).mulScalar(cos).add(down.mulScalar(sin)).mulScalar(dist * cos).add(eye);
+        this._readout?.show(html, x, this._camera.worldToScreen(v3, point).y);
+    }
+
     /** @private */
     _storeGuidePoints() {
         const gizmoPos = this.root.getLocalPosition();
@@ -469,6 +579,7 @@ class RotateGizmo extends TransformGizmo {
         this._guideAngleStart.copy(this._selectionStartPoint).sub(gizmoPos).normalize();
         this._guideAngleStart.mulScalar(scale);
         this._guideAngleEnd.copy(this._guideAngleStart);
+        this._guideAngle = 0;
     }
 
     /**
@@ -488,6 +599,8 @@ class RotateGizmo extends TransformGizmo {
         }
         q1.setFromAxisAngle(v1, angleDelta);
         q1.transformVector(this._guideAngleStart, this._guideAngleEnd);
+        this._guideAngleAxis.copy(v1);
+        this._guideAngle = angleDelta;
 
         this._renderUpdate = true;
     }
@@ -510,9 +623,29 @@ class RotateGizmo extends TransformGizmo {
                 this._scale, baseColor);
             this._guideAngleLines[0].entity.enabled = true;
             this._guideAngleLines[1].entity.enabled = true;
+
+            // at most one turn is filled: each full turn adds a step of opacity to the whole
+            // circle, and the swept part one step more
+            const angle = this._guideAngle;
+            const turns = Math.floor(Math.abs(angle) / 360);
+            const swept = angle % 360;
+            const rest = swept >= 0 ? 360 - swept : -(360 + swept);
+            color.copy(this._theme.shapeBase[axis]);
+            color.a = Math.min(1, SECTOR_ALPHA * (turns + 1));
+            this._guideAngleSectors[0].draw(gizmoPos, this._guideAngleStart, this._guideAngleAxis, 0, swept,
+                this._scale, color);
+            this._guideAngleSectors[0].entity.enabled = swept !== 0;
+            if (turns > 0) {
+                color.a = Math.min(1, SECTOR_ALPHA * turns);
+                this._guideAngleSectors[1].draw(gizmoPos, this._guideAngleStart, this._guideAngleAxis, swept, rest,
+                    this._scale, color);
+            }
+            this._guideAngleSectors[1].entity.enabled = turns > 0;
         } else {
             this._guideAngleLines[0].entity.enabled = false;
             this._guideAngleLines[1].entity.enabled = false;
+            this._guideAngleSectors[0].entity.enabled = false;
+            this._guideAngleSectors[1].entity.enabled = false;
         }
     }
 
@@ -797,6 +930,7 @@ class RotateGizmo extends TransformGizmo {
     /** @override */
     destroy() {
         this._guideAngleLines.forEach(line => line.destroy());
+        this._guideAngleSectors.forEach(sector => sector.destroy());
 
         super.destroy();
     }

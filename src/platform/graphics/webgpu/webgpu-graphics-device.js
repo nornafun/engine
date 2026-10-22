@@ -1891,6 +1891,10 @@ class WebgpuGraphicsDevice extends GraphicsDevice {
         }
 
         this.endComputePass();
+
+        // track the dispatches and the compute pass recording them
+        this._computeDispatchesPerFrame += computes.length;
+        this._computePassesPerFrame++;
     }
 
     getCommandEncoder() {
