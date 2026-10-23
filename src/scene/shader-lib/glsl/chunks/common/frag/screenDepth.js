@@ -67,9 +67,12 @@ float getLinearScreenDepth(vec2 uv) {
 }
 
 #ifndef VERTEXSHADER
-    // Retrieves rendered linear camera depth under the current pixel
+    // Retrieves rendered linear camera depth under the current pixel. The depth map is a copy of
+    // the render target the fragment is rendered to, so its own size maps the fragment to it - the
+    // screen_size uniform is the size of the canvas, which a target scaled by
+    // CameraFrame#rendering.renderTargetScale, or any other offscreen target, does not match
     float getLinearScreenDepth() {
-        vec2 uv = gl_FragCoord.xy * screen_size.zw;
+        vec2 uv = gl_FragCoord.xy / vec2(textureSize(uSceneDepthMap, 0));
         return getLinearScreenDepth(uv);
     }
 #endif
